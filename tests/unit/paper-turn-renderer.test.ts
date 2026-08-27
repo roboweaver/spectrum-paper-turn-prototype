@@ -311,12 +311,11 @@ describe('paper shaders', () => {
 
     expect(paperTurnFragmentShader).toContain('uniform sampler2D paperTexture;');
     expect(paperTurnFragmentShader).toContain('uniform float shadowStrength;');
-    expect(paperTurnFragmentShader).toContain('vec3(0.86, 0.87, 0.89)');
-    expect(paperTurnFragmentShader).toContain('front.rgb * 0.2');
-    expect(paperTurnFragmentShader).toContain('0.78 + vShade * 0.32');
     expect(normalizedShader).toContain(
-      'vec3 face = gl_FrontFacing ? front.rgb : reverse; float reverseShadow = gl_FrontFacing ? 0.0 : shadowStrength * 0.35; gl_FragColor = vec4(face * highlight * (1.0 - reverseShadow), front.a);',
+      'vec3 reverse = mix(vec3(0.86, 0.87, 0.89), front.rgb, 0.2); float highlight = 0.78 + vShade * 0.32; vec3 face = gl_FrontFacing ? front.rgb : reverse; float reverseShadow = gl_FrontFacing ? 0.0 : shadowStrength * 0.35; gl_FragColor = vec4(face * highlight * (1.0 - reverseShadow), front.a);',
     );
+    expect(normalizedShader).not.toContain('reverseBase');
+    expect(normalizedShader).not.toContain('reverse = reverseBase * highlight;');
   });
 });
 
