@@ -54,6 +54,62 @@ function createFakeClock(startedAt = 0): FakeClockControls {
 }
 
 describe('animateProgress', () => {
+  it('rejects and cleans up when initial requestFrame throws synchronously', async () => {
+    const controller = new AbortController();
+    const failure = new Error('scheduler offline');
+    const removeEventListener = vi.spyOn(controller.signal, 'removeEventListener');
+    const cancelFrame = vi.fn();
+
+    const promise = animateProgress(0, 1, 100, vi.fn(), controller.signal, {
+      now: () => 0,
+      requestFrame: () => {
+        throw failure;
+      },
+      cancelFrame,
+    });
+
+    await expect(promise).rejects.toBe(failure);
+    expect(removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function));
+    expect(cancelFrame).not.toHaveBeenCalled();
+  });
+
+  it('rejects and cleans up when a requeued requestFrame throws synchronously', async () => {
+    const controller = new AbortController();
+    const failure = new Error('scheduler offline');
+    const removeEventListener = vi.spyOn(controller.signal, 'removeEventListener');
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let nextHandle = 1;
+    let secondRequest = false;
+    const cancelFrame = vi.fn((handle: number) => {
+      callbacks.delete(handle);
+    });
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      if (secondRequest) {
+        throw failure;
+      }
+
+      const handle = nextHandle;
+      nextHandle += 1;
+      callbacks.set(handle, callback);
+      secondRequest = true;
+      return handle;
+    });
+
+    const promise = animateProgress(0, 1, 100, vi.fn(), controller.signal, {
+      now: () => 0,
+      requestFrame,
+      cancelFrame,
+    });
+
+    expect(callbacks.size).toBe(1);
+    expect(() => callbacks.get(1)?.(50)).not.toThrow();
+
+    await expect(promise).rejects.toBe(failure);
+    expect(removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function));
+    expect(cancelFrame).not.toHaveBeenCalled();
+    expect(callbacks.size).toBe(0);
+  });
+
   it('emits exact first and last endpoints in forward and reverse directions', async () => {
     const forwardClock = createFakeClock();
     const forwardValues: number[] = [];
@@ -127,6 +183,55 @@ describe('animateProgress', () => {
 
     await expect(promise).rejects.toBe(failure);
     expect(requestFrame).not.toHaveBeenCalled();
+  });
+
+  it('rejects with AbortError without scheduling when the initial onFrame aborts synchronously', async () => {
+    const controller = new AbortController();
+    const clock = createFakeClock();
+
+    const promise = animateProgress(
+      0,
+      1,
+      100,
+      () => {
+        controller.abort();
+      },
+      controller.signal,
+      clock.clock,
+    );
+
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    expect(clock.requestFrame).not.toHaveBeenCalled();
+    expect(clock.cancelFrame).not.toHaveBeenCalled();
+    expect(clock.queuedHandles()).toEqual([]);
+  });
+
+  it('rejects with AbortError without requeueing when onFrame aborts mid-animation', async () => {
+    const controller = new AbortController();
+    const clock = createFakeClock();
+    let callCount = 0;
+    const promise = animateProgress(
+      0,
+      1,
+      100,
+      () => {
+        callCount += 1;
+        if (callCount === 2) {
+          controller.abort();
+        }
+      },
+      controller.signal,
+      clock.clock,
+    );
+
+    expect(clock.queuedHandles()).toEqual([1]);
+
+    clock.advanceTo(50);
+
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    expect(clock.requestFrame).toHaveBeenCalledTimes(1);
+    expect(clock.cancelFrame).not.toHaveBeenCalled();
+    expect(clock.queuedHandles()).toEqual([]);
   });
 
   it('rejects an already-aborted signal before emitting or scheduling', async () => {
