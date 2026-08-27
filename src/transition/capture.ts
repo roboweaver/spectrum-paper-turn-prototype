@@ -34,24 +34,40 @@ export function textureCaptureOptions(
   const boundedWidth = Math.max(1, width);
   const boundedHeight = Math.max(1, height);
   const requestedDpr = Math.min(devicePixelRatio, profile.maxTextureDpr);
+  const maxTextureEdge = Math.sqrt(profile.maxTexturePixels);
   const boundedArea = boundedWidth * boundedHeight;
 
-  if (!Number.isFinite(boundedArea)) {
+  if (!Number.isFinite(boundedArea) || !isFinitePositive(maxTextureEdge)) {
     throw new Error('Capture dimensions exceed supported range');
   }
 
   const requestedPixels = boundedArea * requestedDpr * requestedDpr;
+  const requestedPhysicalWidth = boundedWidth * requestedDpr;
+  const requestedPhysicalHeight = boundedHeight * requestedDpr;
 
-  if (!Number.isFinite(requestedPixels)) {
+  if (
+    !Number.isFinite(requestedPixels) ||
+    !Number.isFinite(requestedPhysicalWidth) ||
+    !Number.isFinite(requestedPhysicalHeight)
+  ) {
     throw new Error('Capture dimensions exceed supported range');
   }
 
-  const pixelScale =
+  const totalPixelScale =
     requestedPixels > profile.maxTexturePixels
       ? Math.sqrt(profile.maxTexturePixels / requestedPixels)
       : 1;
+  const widthScale =
+    requestedPhysicalWidth > maxTextureEdge ? maxTextureEdge / requestedPhysicalWidth : 1;
+  const heightScale =
+    requestedPhysicalHeight > maxTextureEdge ? maxTextureEdge / requestedPhysicalHeight : 1;
+  const pixelScale = Math.min(totalPixelScale, widthScale, heightScale);
   let pixelRatio = requestedDpr * pixelScale;
   const totalPixels = boundedArea * pixelRatio * pixelRatio;
+
+  if (!isFinitePositive(pixelRatio) || !Number.isFinite(totalPixels)) {
+    throw new Error('Capture dimensions exceed supported range');
+  }
 
   if (totalPixels > profile.maxTexturePixels) {
     pixelRatio *= Math.sqrt(profile.maxTexturePixels / totalPixels);

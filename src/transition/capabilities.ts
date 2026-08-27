@@ -23,9 +23,17 @@ export function selectMotionMode(prerequisites: FullMotionPrerequisites): Motion
 }
 
 export function browserMotionMode(): MotionMode {
+  if (
+    typeof globalThis.matchMedia !== 'function' ||
+    globalThis.document === undefined ||
+    globalThis.HTMLCanvasElement === undefined
+  ) {
+    return 'fallback';
+  }
+
   return selectMotionMode({
-    reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-    webglAvailable: hasWebGl(),
-    captureAvailable: typeof HTMLCanvasElement !== 'undefined',
+    reducedMotion: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    webglAvailable: hasWebGl(globalThis.document),
+    captureAvailable: true,
   });
 }
