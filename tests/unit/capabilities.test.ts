@@ -92,39 +92,45 @@ describe('hasWebGl', () => {
 });
 
 describe('browserMotionMode', () => {
-  const originalMatchMedia = window.matchMedia;
-  const originalCreateElement = document.createElement.bind(document);
-  const originalCanvas = globalThis.HTMLCanvasElement;
-
   afterEach(() => {
-    window.matchMedia = originalMatchMedia;
-    document.createElement = originalCreateElement;
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
-    if (originalCanvas === undefined) {
-      // @ts-expect-error jsdom global cleanup
-      delete globalThis.HTMLCanvasElement;
-      return;
-    }
-    vi.stubGlobal('HTMLCanvasElement', originalCanvas);
   });
 
   it('returns full when reduced motion is off, WebGL is available, and capture exists', () => {
-    window.matchMedia = vi.fn(() => ({ matches: false } as MediaQueryList));
-    document.createElement = vi.fn(() => ({
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false } as MediaQueryList)));
+    vi.spyOn(document, 'createElement').mockReturnValue({
       getContext: vi.fn((name: string) => (name === 'webgl2' ? { label: 'webgl2' } : null)),
-    })) as unknown as typeof document.createElement;
+    } as unknown as HTMLCanvasElement);
     vi.stubGlobal('HTMLCanvasElement', class HTMLCanvasElementStub {});
 
     expect(browserMotionMode()).toBe('full');
   });
 
+  it('returns fallback when matchMedia is unavailable and reduced-motion preference is unknown', () => {
+    vi.stubGlobal('matchMedia', undefined);
+    vi.spyOn(document, 'createElement').mockReturnValue({
+      getContext: vi.fn((name: string) => (name === 'webgl2' ? { label: 'webgl2' } : null)),
+    } as unknown as HTMLCanvasElement);
+    vi.stubGlobal('HTMLCanvasElement', class HTMLCanvasElementStub {});
+
+    expect(browserMotionMode()).toBe('fallback');
+  });
+
+  it('returns fallback when DOM or canvas globals are unavailable', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false } as MediaQueryList)));
+    vi.stubGlobal('document', undefined);
+    vi.stubGlobal('HTMLCanvasElement', undefined);
+
+    expect(browserMotionMode()).toBe('fallback');
+  });
+
   it('returns fallback when any browser prerequisite is missing', () => {
-    window.matchMedia = vi.fn(() => ({ matches: true } as MediaQueryList));
-    document.createElement = vi.fn(() => ({
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true } as MediaQueryList)));
+    vi.spyOn(document, 'createElement').mockReturnValue({
       getContext: vi.fn(() => null),
-    })) as unknown as typeof document.createElement;
-    // @ts-expect-error exercise undefined capture support
-    delete globalThis.HTMLCanvasElement;
+    } as unknown as HTMLCanvasElement);
+    vi.stubGlobal('HTMLCanvasElement', class HTMLCanvasElementStub {});
 
     expect(browserMotionMode()).toBe('fallback');
   });

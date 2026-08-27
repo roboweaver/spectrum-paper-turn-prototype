@@ -41,11 +41,16 @@ describe('textureCaptureOptions', () => {
     ).toThrow('Motion profile texture caps must be finite positive numbers');
   });
 
-  it('clamps subpixel dimensions before enforcing the texture budget', () => {
+  it('clamps subpixel dimensions and keeps each physical texture edge within the budget-derived cap', () => {
     const options = textureCaptureOptions(0.5, 5_000_000, 2, defaultMotionProfile);
+    const maxTextureEdge = Math.sqrt(defaultMotionProfile.maxTexturePixels);
     const totalPixels = options.width * options.height * options.pixelRatio * options.pixelRatio;
 
     expect(options.width).toBe(1);
+    expect(Number.isFinite(options.pixelRatio)).toBe(true);
+    expect(options.pixelRatio).toBeGreaterThan(0);
+    expect(options.width * options.pixelRatio).toBeLessThanOrEqual(maxTextureEdge);
+    expect(options.height * options.pixelRatio).toBeLessThanOrEqual(maxTextureEdge);
     expect(totalPixels).toBeLessThanOrEqual(defaultMotionProfile.maxTexturePixels);
   });
 
