@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultMotionProfile } from '../../src/transition/motion-profile';
 import { TransitionCoordinator } from '../../src/transition/transition-coordinator';
 import type {
+  Corner,
   PaperRenderer,
   TransitionDependencies,
   TransitionOpenRequest,
@@ -10,6 +11,12 @@ import type {
 } from '../../src/transition/types';
 
 const FULL_CLIP = 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)';
+const CLOSED_CLIP_BY_CORNER: Record<Corner, string> = {
+  'top-left': 'polygon(0% 0%, 0% 0%, 0% 0%)',
+  'top-right': 'polygon(100% 0%, 100% 0%, 100% 0%)',
+  'bottom-right': 'polygon(100% 100%, 100% 100%, 100% 100%)',
+  'bottom-left': 'polygon(0% 100%, 0% 100%, 0% 100%)',
+};
 
 interface ActiveSnapshot {
   request: TransitionOpenRequest;
@@ -158,6 +165,22 @@ describe('TransitionCoordinator', () => {
       }),
     );
   });
+
+  it.each(Object.entries(CLOSED_CLIP_BY_CORNER) as [Corner, string][])(
+    'seeds the %s closed clip before revealing detail',
+    async (grabbedCorner, closedClip) => {
+      const { coordinator, request, view } = harness();
+      request.grabbedCorner = grabbedCorner;
+
+      await coordinator.open(request);
+
+      expect(view.setDetailClip).toHaveBeenNthCalledWith(1, closedClip);
+      expect(vi.mocked(view.setDetailClip).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(view.setDetailVisible).mock.invocationCallOrder[0]!,
+      );
+      expect(view.setDetailVisible).toHaveBeenNthCalledWith(1, true);
+    },
+  );
 
   it('rejects an overlapping open while already opening and exposes the active request', async () => {
     const { coordinator, dependencies, request, source } = harness();
@@ -571,6 +594,31 @@ describe('TransitionCoordinator', () => {
     expect(coordinator.state).toBe('open');
   });
 
+  it('resets the hidden clip after a fallback close and reseeds it before reopening', async () => {
+    const { coordinator, request, view } = harness({ mode: 'fallback' });
+    const closedClip = CLOSED_CLIP_BY_CORNER[request.grabbedCorner];
+
+    await coordinator.open(request);
+    vi.mocked(view.setDetailClip).mockClear();
+    vi.mocked(view.setDetailVisible).mockClear();
+
+    await coordinator.close();
+
+    expect(view.setDetailClip).toHaveBeenLastCalledWith(closedClip);
+    expect(view.setDetailVisible).toHaveBeenLastCalledWith(false);
+
+    vi.mocked(view.setDetailClip).mockClear();
+    vi.mocked(view.setDetailVisible).mockClear();
+
+    await coordinator.open(request);
+
+    expect(view.setDetailClip).toHaveBeenNthCalledWith(1, closedClip);
+    expect(view.setDetailClip).toHaveBeenNthCalledWith(2, FULL_CLIP);
+    expect(vi.mocked(view.setDetailClip).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(view.setDetailVisible).mock.invocationCallOrder[0]!,
+    );
+  });
+
   it('logs fallback failures exactly and still settles to the requested stable endpoint', async () => {
     const fallbackFailure = new Error('fallback failed');
     const { coordinator, request } = harness({ mode: 'fallback', fallbackFailure });
@@ -747,6 +795,37 @@ describe('TransitionCoordinator', () => {
 
     expect(dependencies.runFallback).toHaveBeenCalledWith('close', 200, expect.any(AbortSignal));
     expect(coordinator.state).toBe('idle');
+  });
+
+  it('resets the hidden clip after an interrupted close-to-idle and reseeds it before reopening', async () => {
+    const { coordinator, dependencies, request, view } = harness();
+    const closedClip = CLOSED_CLIP_BY_CORNER[request.grabbedCorner];
+    dependencies.animate = vi.fn(
+      async (_from, _to, _duration, onFrame, signal) =>
+        new Promise<void>((_resolve, reject) => {
+          onFrame(0.2);
+          signal.addEventListener('abort', () => reject(makeAbortError()), { once: true });
+        }),
+    );
+
+    const opening = coordinator.open(request);
+    await flushMicrotasks();
+    await flushMicrotasks();
+    coordinator.cancel();
+    await opening;
+
+    expect(coordinator.state).toBe('idle');
+    expect(view.setDetailClip).toHaveBeenLastCalledWith(closedClip);
+
+    vi.mocked(view.setDetailClip).mockClear();
+    vi.mocked(view.setDetailVisible).mockClear();
+
+    await coordinator.open(request);
+
+    expect(view.setDetailClip).toHaveBeenNthCalledWith(1, closedClip);
+    expect(vi.mocked(view.setDetailClip).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(view.setDetailVisible).mock.invocationCallOrder[0]!,
+    );
   });
 
   it('Escape at threshold opening progress falls back open and settles open', async () => {

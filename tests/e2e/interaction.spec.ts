@@ -8,6 +8,9 @@ type PaperTurnPageWindow = Window & {
   };
 };
 
+const FULL_CLIP = 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)';
+const CLOSED_TOP_RIGHT_CLIP = 'polygon(100% 0%, 100% 0%, 100% 0%)';
+
 function cardTrigger(page: Page, index: number) {
   return page.locator('[data-card-trigger]').nth(index);
 }
@@ -34,6 +37,10 @@ function overlay(page: Page) {
 
 function root(page: Page) {
   return page.locator('#app');
+}
+
+async function detailInlineClip(page: Page) {
+  return detailSurface(page).evaluate((element) => (element as HTMLElement).style.clipPath);
 }
 
 async function overlayProgress(page: Page) {
@@ -175,13 +182,27 @@ test('each card opens its own content and restores focus when closed', async ({ 
   }
 });
 
-test('reduced motion and explicit fallback both skip the mesh overlay', async ({ page }) => {
+test('reduced motion and explicit fallback reset the hidden detail clip before reopen', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/?duration=2000');
 
   await cardTrigger(page, 0).click();
   await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toHaveText('Spectrum foundations');
   await expect(overlay(page)).toHaveCount(0);
+  await closeButton(page).click();
+  await expect(cardTrigger(page, 0)).toBeFocused();
+  await expect(detailSurface(page)).toBeHidden();
+  await expect(root(page)).toHaveAttribute('data-transition-state', 'idle');
+  await expect(overlay(page)).toHaveCount(0);
+  await expect.poll(() => detailInlineClip(page)).toBe(CLOSED_TOP_RIGHT_CLIP);
+
+  await cardTrigger(page, 0).click();
+  await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toHaveText('Spectrum foundations');
+  await expect(root(page)).toHaveAttribute('data-transition-state', 'open');
+  await expect(overlay(page)).toHaveCount(0);
+  await expect.poll(() => detailInlineClip(page)).toBe(FULL_CLIP);
 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto('/?fallback=1');
@@ -189,6 +210,19 @@ test('reduced motion and explicit fallback both skip the mesh overlay', async ({
   await expect(detailSurface(page)).toBeVisible();
   await expect(detailHeading(page)).toHaveText('Workflow patterns');
   await expect(overlay(page)).toHaveCount(0);
+  await closeButton(page).click();
+  await expect(cardTrigger(page, 1)).toBeFocused();
+  await expect(detailSurface(page)).toBeHidden();
+  await expect(root(page)).toHaveAttribute('data-transition-state', 'idle');
+  await expect(overlay(page)).toHaveCount(0);
+  await expect.poll(() => detailInlineClip(page)).toBe(CLOSED_TOP_RIGHT_CLIP);
+
+  await cardTrigger(page, 1).click();
+  await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toHaveText('Workflow patterns');
+  await expect(root(page)).toHaveAttribute('data-transition-state', 'open');
+  await expect(overlay(page)).toHaveCount(0);
+  await expect.poll(() => detailInlineClip(page)).toBe(FULL_CLIP);
 });
 
 test('chromium mobile keeps mesh density and canvas DPR within bounds', async ({ page }, testInfo) => {
