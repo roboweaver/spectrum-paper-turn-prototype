@@ -36,6 +36,11 @@ function root(page: Page) {
   return page.locator('#app');
 }
 
+async function overlayProgress(page: Page) {
+  const progressText = await overlay(page).getAttribute('data-progress');
+  return progressText === null ? Number.NaN : Number(progressText);
+}
+
 async function openCardAndExpectHeading(page: Page, index: number, title: string) {
   await cardTrigger(page, index).click();
   await expect(detailSurface(page)).toBeVisible();
@@ -129,6 +134,13 @@ test('Escape during closing settles at the nearest open endpoint', async ({ page
   await closeButton(page).click();
   await expect(overlay(page)).toHaveCount(1);
   await expect(overlay(page)).toBeVisible();
+  await page.waitForFunction(() => {
+    const progress = Number(document.querySelector('.paper-turn-overlay')?.getAttribute('data-progress'));
+    return Number.isFinite(progress) && progress > 0.5 && progress < 0.95;
+  }, { timeout: 1500 });
+  const closingProgress = await overlayProgress(page);
+  expect(closingProgress).toBeGreaterThan(0.5);
+  expect(closingProgress).toBeLessThan(0.95);
 
   await page.keyboard.press('Escape');
 
@@ -139,7 +151,7 @@ test('Escape during closing settles at the nearest open endpoint', async ({ page
 });
 
 test('resizing mid-motion settles directly to the open detail surface', async ({ page }) => {
-  await page.goto('/?duration=2000');
+  await page.goto('/?duration=10000');
 
   await cardTrigger(page, 0).click();
   await expect(overlay(page)).toHaveCount(1);
@@ -147,9 +159,11 @@ test('resizing mid-motion settles directly to the open detail surface', async ({
 
   await page.setViewportSize({ width: 900, height: 640 });
 
-  await expect(detailSurface(page)).toBeVisible();
-  await expect(root(page)).toHaveAttribute('data-transition-state', 'open');
-  await expect(overlay(page)).toHaveCount(0);
+  await Promise.all([
+    expect(detailSurface(page)).toBeVisible({ timeout: 2000 }),
+    expect(root(page)).toHaveAttribute('data-transition-state', 'open', { timeout: 2000 }),
+    expect(overlay(page)).toHaveCount(0, { timeout: 2000 }),
+  ]);
 });
 
 test('each card opens its own content and restores focus when closed', async ({ page }) => {
