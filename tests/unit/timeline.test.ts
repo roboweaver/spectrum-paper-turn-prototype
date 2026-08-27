@@ -102,7 +102,9 @@ describe('animateProgress', () => {
     });
 
     expect(callbacks.size).toBe(1);
-    expect(() => callbacks.get(1)?.(50)).not.toThrow();
+    const queued = callbacks.get(1);
+    callbacks.delete(1);
+    expect(() => queued?.(50)).not.toThrow();
 
     await expect(promise).rejects.toBe(failure);
     expect(removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function));

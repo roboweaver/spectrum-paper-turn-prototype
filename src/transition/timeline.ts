@@ -96,6 +96,13 @@ export function animateProgress(
     const onAbort = () => {
       settleAbort();
     };
+    const queueFrame = () => {
+      try {
+        frameHandle = clock.requestFrame(frame);
+      } catch (error) {
+        settleFailure(error);
+      }
+    };
     const frame: FrameRequestCallback = (timestamp) => {
       if (settled) {
         return;
@@ -117,12 +124,17 @@ export function animateProgress(
         return;
       }
 
+      if (settled || signal.aborted) {
+        settleAbort();
+        return;
+      }
+
       if (elapsed === 1) {
         settleSuccess();
         return;
       }
 
-      frameHandle = clock.requestFrame(frame);
+      queueFrame();
     };
 
     signal.addEventListener('abort', onAbort, { once: true });
@@ -134,6 +146,11 @@ export function animateProgress(
       return;
     }
 
-    frameHandle = clock.requestFrame(frame);
+    if (settled || signal.aborted) {
+      settleAbort();
+      return;
+    }
+
+    queueFrame();
   });
 }
