@@ -797,26 +797,37 @@ describe('TransitionCoordinator', () => {
     expect(coordinator.state).toBe('idle');
   });
 
-  it('resets the hidden clip after an interrupted close-to-idle and reseeds it before reopening', async () => {
+  it('resets the hidden clip after an interrupted low-progress close-to-idle and reseeds it before reopening', async () => {
     const { coordinator, dependencies, request, view } = harness();
     const closedClip = CLOSED_CLIP_BY_CORNER[request.grabbedCorner];
-    vi.mocked(dependencies.animate).mockImplementationOnce(
+    const animateNormally = dependencies.animate;
+
+    await coordinator.open(request);
+    expect(coordinator.state).toBe('open');
+
+    let closingStarted!: () => void;
+    const closingInFlight = new Promise<void>((resolve) => {
+      closingStarted = resolve;
+    });
+    dependencies.animate = vi.fn(
       async (_from, _to, _duration, onFrame, signal) =>
         new Promise<void>((_resolve, reject) => {
-          onFrame(0.2);
+          onFrame(0.4);
+          queueMicrotask(closingStarted);
           signal.addEventListener('abort', () => reject(makeAbortError()), { once: true });
         }),
     );
 
-    const opening = coordinator.open(request);
-    await flushMicrotasks();
-    await flushMicrotasks();
+    const closing = coordinator.close();
+    await closingInFlight;
     coordinator.cancel();
-    await opening;
+    await closing;
 
+    expect(dependencies.runFallback).toHaveBeenCalledWith('close', 200, expect.any(AbortSignal));
     expect(coordinator.state).toBe('idle');
     expect(view.setDetailClip).toHaveBeenLastCalledWith(closedClip);
 
+    dependencies.animate = animateNormally;
     vi.mocked(view.setDetailClip).mockClear();
     vi.mocked(view.setDetailVisible).mockClear();
 
