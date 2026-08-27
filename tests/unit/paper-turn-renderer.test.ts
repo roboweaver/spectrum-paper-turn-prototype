@@ -454,6 +454,27 @@ describe('PaperTurnRenderer', () => {
     expect(threeMock.renderers).toHaveLength(0);
   });
 
+  it.each([
+    ['sourceRect.left', { left: Number.NaN }],
+    ['sourceRect.top', { top: Number.POSITIVE_INFINITY }],
+    ['sourceRect.width', { width: 0 }],
+    ['sourceRect.height', { height: -1 }],
+  ] as const)('rejects invalid %s values before overlay and renderer creation', (field, sourceRect) => {
+    const input = createInput();
+
+    expect(() =>
+      new PaperTurnRenderer({
+        ...input,
+        sourceRect: {
+          ...input.sourceRect,
+          ...sourceRect,
+        },
+      }),
+    ).toThrow(new RegExp(`Invalid ${field.replace('.', '\\.')}`));
+    expect(document.body.querySelector('.paper-turn-overlay')).toBeNull();
+    expect(threeMock.renderers).toHaveLength(0);
+  });
+
   it.each([-0.01, 1.01])('rejects out-of-range shadowStrength values: %s', (shadowStrength) => {
     const input = {
       ...createInput(),
