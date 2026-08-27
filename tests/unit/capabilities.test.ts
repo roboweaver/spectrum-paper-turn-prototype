@@ -125,6 +125,14 @@ describe('browserMotionMode', () => {
     expect(browserMotionMode()).toBe('fallback');
   });
 
+  it('returns fallback when required DOM canvas APIs are unavailable', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false } as MediaQueryList)));
+    vi.stubGlobal('document', {} as Document);
+    vi.stubGlobal('HTMLCanvasElement', class HTMLCanvasElementStub {});
+
+    expect(browserMotionMode()).toBe('fallback');
+  });
+
   it('returns fallback when any browser prerequisite is missing', () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true } as MediaQueryList)));
     vi.spyOn(document, 'createElement').mockReturnValue({
