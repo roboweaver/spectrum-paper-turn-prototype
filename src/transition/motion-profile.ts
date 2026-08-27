@@ -5,7 +5,7 @@ function easeInOutCubic(progress: number): number {
   return 1 - Math.pow(-2 * progress + 2, 3) / 2;
 }
 
-export const defaultMotionProfile: MotionProfile = Object.freeze({
+export const defaultMotionProfile = Object.freeze({
   durationMs: 720,
   fallbackDurationMs: 200,
   bendDepth: 120,
@@ -17,4 +17,4 @@ export const defaultMotionProfile: MotionProfile = Object.freeze({
   maxTextureDpr: 2,
   maxTexturePixels: 4_194_304,
   easing: easeInOutCubic,
-});
+} satisfies MotionProfile);
