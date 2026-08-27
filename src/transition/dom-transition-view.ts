@@ -130,10 +130,10 @@ export class DomTransitionView implements TransitionView {
   }
 
   public focusDetailHeading(): void {
-    this.options.heading.focus();
+    this.options.heading.focus({ preventScroll: true });
   }
 
   public focusListFallback(): void {
-    this.options.fallback.focus();
+    this.options.fallback.focus({ preventScroll: true });
   }
 }
