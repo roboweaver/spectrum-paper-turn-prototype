@@ -1,4 +1,4 @@
-import { cardById, cards } from './data/cards';
+import { cardById, cards, type CardRecord } from './data/cards';
 
 export interface DemoApp {
   listSurface: HTMLElement;
@@ -10,17 +10,34 @@ export interface DemoApp {
   resolveSource(sourceId: string): HTMLElement | null;
 }
 
-function cardMarkup(id: string, title: string, subtitle: string, description: string, color: string): string {
-  return `
-    <li class="card-grid-item">
-      <button class="card-trigger" data-card-trigger data-source-id="${id}" type="button">
-        <sp-card heading="${title}" subheading="${subtitle}" size="s">
-          <div slot="preview" class="card-preview" style="--card-color: ${color}"></div>
-          <p>${description}</p>
-        </sp-card>
-      </button>
-    </li>
-  `;
+function createCardItem(document: Document, card: CardRecord): HTMLLIElement {
+  const item = document.createElement('li');
+  item.className = 'card-grid-item';
+
+  const button = document.createElement('button');
+  button.className = 'card-trigger';
+  button.setAttribute('data-card-trigger', '');
+  button.dataset.sourceId = card.id;
+  button.type = 'button';
+
+  const cardElement = document.createElement('sp-card');
+  cardElement.setAttribute('heading', card.title);
+  cardElement.setAttribute('subheading', card.subtitle);
+  cardElement.setAttribute('size', 's');
+
+  const preview = document.createElement('div');
+  preview.slot = 'preview';
+  preview.className = 'card-preview';
+  preview.style.setProperty('--card-color', card.color);
+
+  const description = document.createElement('p');
+  description.textContent = card.description;
+
+  cardElement.append(preview, description);
+  button.append(cardElement);
+  item.append(button);
+
+  return item;
 }
 
 export function createDemoApp(root: HTMLElement): DemoApp {
@@ -33,9 +50,7 @@ export function createDemoApp(root: HTMLElement): DemoApp {
             <h1>Paper-turn navigation</h1>
             <p>Choose a card to open a full-page detail surface.</p>
           </header>
-          <ul class="card-grid" data-list-focus-fallback tabindex="-1" aria-label="Design topics">
-            ${cards.map((card) => cardMarkup(card.id, card.title, card.subtitle, card.description, card.color)).join('')}
-          </ul>
+          <ul class="card-grid" data-list-focus-fallback tabindex="-1" aria-label="Design topics"></ul>
         </section>
         <article class="detail-surface" data-detail-surface hidden>
           <div class="detail-toolbar">
@@ -63,6 +78,11 @@ export function createDemoApp(root: HTMLElement): DemoApp {
     throw new Error('Demo DOM contract is incomplete');
   }
 
+  const document = root.ownerDocument;
+  cards.forEach((card) => {
+    listFocusFallback.append(createCardItem(document, card));
+  });
+
   detailSurface.inert = true;
 
   return {
@@ -79,7 +99,7 @@ export function createDemoApp(root: HTMLElement): DemoApp {
       detailSurface.style.setProperty('--detail-color', card.color);
     },
     resolveSource(sourceId: string) {
-      return root.querySelector<HTMLElement>(`[data-card-trigger][data-source-id="${sourceId}"]`);
+      return Array.from(root.querySelectorAll<HTMLElement>('[data-card-trigger]')).find((element) => element.dataset.sourceId === sourceId) ?? null;
     },
   };
 }

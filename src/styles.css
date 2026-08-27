@@ -93,7 +93,11 @@ sp-card { width: 100%; min-height: 330px; }
 
 .detail-toolbar { display: flex; justify-content: flex-end; }
 .detail-content { max-width: 900px; margin-top: clamp(64px, 12vh, 160px); }
-.detail-content h2:focus { outline: none; }
+.detail-content h2:focus {
+  outline: 3px solid #1473e6;
+  outline-offset: 6px;
+  border-radius: 8px;
+}
 [data-transition-hidden='true'] { visibility: hidden; }
 
 .paper-turn-overlay {
