@@ -5,7 +5,10 @@ describe('createDemoApp', () => {
   it('renders keyboard-operable cards and one hidden inert detail endpoint', () => {
     const root = document.createElement('div');
     const app = createDemoApp(root);
+    const cardGrid = root.querySelector<HTMLElement>('[data-list-focus-fallback]');
 
+    expect(cardGrid?.tagName).toBe('UL');
+    expect(cardGrid?.querySelectorAll(':scope > li')).toHaveLength(3);
     expect(root.querySelectorAll<HTMLButtonElement>('[data-card-trigger]')).toHaveLength(3);
     expect(app.listSurface.getAttribute('aria-busy')).toBe('false');
     expect(app.detailSurface.hidden).toBe(true);
