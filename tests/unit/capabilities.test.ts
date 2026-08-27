@@ -133,6 +133,16 @@ describe('browserMotionMode', () => {
     expect(browserMotionMode()).toBe('fallback');
   });
 
+  it('returns fallback when canvas creation is unavailable during WebGL probing', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false } as MediaQueryList)));
+    vi.spyOn(document, 'createElement').mockImplementation(() => {
+      throw new Error('canvas blocked');
+    });
+    vi.stubGlobal('HTMLCanvasElement', class HTMLCanvasElementStub {});
+
+    expect(browserMotionMode()).toBe('fallback');
+  });
+
   it('returns fallback when any browser prerequisite is missing', () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true } as MediaQueryList)));
     vi.spyOn(document, 'createElement').mockReturnValue({
