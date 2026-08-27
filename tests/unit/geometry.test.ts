@@ -87,4 +87,81 @@ describe('paper geometry', () => {
       'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)',
     );
   });
+
+  it('clamps overshooting easing output before using it for frame geometry', () => {
+    const overshootingProfile: MotionProfile = {
+      ...profile,
+      easing: () => 1.25,
+    };
+
+    const overshot = buildPaperFrame(source, destination, 'top-right', 0.5, overshootingProfile);
+    const completed = buildPaperFrame(source, destination, 'top-right', 1, profile);
+
+    expect(Array.from(overshot.positions)).toEqual(Array.from(completed.positions));
+    expect(Array.from(overshot.shade)).toEqual(Array.from(completed.shade));
+    expect(overshot.revealClipPath).toBe(completed.revealClipPath);
+  });
+
+  it('clamps undershooting easing output before using it for frame geometry', () => {
+    const undershootingProfile: MotionProfile = {
+      ...profile,
+      easing: () => -0.25,
+    };
+
+    const undershot = buildPaperFrame(source, destination, 'top-right', 0.5, undershootingProfile);
+    const start = buildPaperFrame(source, destination, 'top-right', 0, profile);
+
+    expect(Array.from(undershot.positions)).toEqual(Array.from(start.positions));
+    expect(Array.from(undershot.shade)).toEqual(Array.from(start.shade));
+    expect(undershot.revealClipPath).toBe(start.revealClipPath);
+  });
+
+  it.each([NaN, Infinity, -Infinity])('rejects non-finite easing output %s', (eased) => {
+    const invalidProfile: MotionProfile = {
+      ...profile,
+      easing: () => eased,
+    };
+
+    expect(() => buildPaperFrame(source, destination, 'top-right', 0.5, invalidProfile)).toThrow(
+      /profile\.easing/,
+    );
+  });
+
+  it.each([
+    ['profile.meshColumns', { meshColumns: 0 }],
+    ['profile.meshColumns', { meshColumns: 1.5 }],
+    ['profile.meshColumns', { meshColumns: NaN }],
+    ['profile.meshRows', { meshRows: 0 }],
+    ['profile.meshRows', { meshRows: 1.5 }],
+    ['profile.meshRows', { meshRows: Infinity }],
+    ['profile.foldSoftness', { foldSoftness: 0 }],
+    ['profile.foldSoftness', { foldSoftness: -0.01 }],
+    ['profile.foldSoftness', { foldSoftness: NaN }],
+  ] as const)('rejects invalid %s in buildPaperFrame profile validation', (field, overrides) => {
+    expect(() =>
+      buildPaperFrame(source, destination, 'top-right', 0.5, {
+        ...profile,
+        ...overrides,
+      }),
+    ).toThrow(field);
+  });
+
+  it.each([
+    ['source.left', { source: { ...source, left: NaN }, destination }],
+    ['source.width', { source: { ...source, width: 0 }, destination }],
+    ['destination.top', { source, destination: { ...destination, top: Infinity } }],
+    ['destination.height', { source, destination: { ...destination, height: 0 } }],
+  ] as const)('rejects invalid %s in buildPaperFrame rectangle validation', (field, rects) => {
+    expect(() =>
+      buildPaperFrame(rects.source, rects.destination, 'top-right', 0.5, profile),
+    ).toThrow(field);
+  });
+
+  it.each([
+    ['rect.width', { ...destination, width: 0 }],
+    ['rect.height', { ...destination, height: NaN }],
+    ['rect.left', { ...destination, left: Infinity }],
+  ] as const)('rejects invalid %s in revealClipPath', (field, rect) => {
+    expect(() => revealClipPath(rect, 'top-right', 0.5)).toThrow(field);
+  });
 });
