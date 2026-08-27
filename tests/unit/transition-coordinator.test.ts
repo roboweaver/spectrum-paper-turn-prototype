@@ -800,7 +800,7 @@ describe('TransitionCoordinator', () => {
   it('resets the hidden clip after an interrupted close-to-idle and reseeds it before reopening', async () => {
     const { coordinator, dependencies, request, view } = harness();
     const closedClip = CLOSED_CLIP_BY_CORNER[request.grabbedCorner];
-    dependencies.animate = vi.fn(
+    vi.mocked(dependencies.animate).mockImplementationOnce(
       async (_from, _to, _duration, onFrame, signal) =>
         new Promise<void>((_resolve, reject) => {
           onFrame(0.2);

@@ -1,4 +1,5 @@
 import type {
+  Corner,
   MotionMode,
   PaperRenderer,
   TransitionDependencies,
@@ -25,6 +26,19 @@ const OPEN_SETUP_RECOVERY_ERROR =
   'Paper-turn open setup cleanup failed while preserving the original error.';
 const CLOSE_SETUP_RECOVERY_ERROR =
   'Paper-turn close setup cleanup failed while preserving the original error.';
+
+function closedClipForCorner(corner: Corner): string {
+  switch (corner) {
+    case 'top-left':
+      return 'polygon(0% 0%, 0% 0%, 0% 0%)';
+    case 'top-right':
+      return 'polygon(100% 0%, 100% 0%, 100% 0%)';
+    case 'bottom-right':
+      return 'polygon(100% 100%, 100% 100%, 100% 100%)';
+    case 'bottom-left':
+      return 'polygon(0% 100%, 0% 100%, 0% 100%)';
+  }
+}
 
 function getErrorName(error: unknown): string | undefined {
   if (typeof error !== 'object' || error === null || !('name' in error)) {
@@ -69,6 +83,7 @@ export class TransitionCoordinator extends EventTarget {
       this.view.setBusy(true);
       this.view.freezeScroll();
       this.view.prepareDetail(request.sourceId);
+      this.view.setDetailClip(closedClipForCorner(request.grabbedCorner));
       this.view.setDetailVisible(true);
       this.view.setDetailInert(true);
 
@@ -301,6 +316,9 @@ export class TransitionCoordinator extends EventTarget {
 
     this.view.setBusy(false);
     this.view.setDetailInert(true);
+    if (request) {
+      this.view.setDetailClip(closedClipForCorner(request.grabbedCorner));
+    }
     this.view.setDetailVisible(false);
     this.view.setListVisible(true);
     this.view.restoreScroll();
