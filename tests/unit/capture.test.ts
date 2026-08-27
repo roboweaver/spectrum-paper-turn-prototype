@@ -40,6 +40,20 @@ describe('textureCaptureOptions', () => {
       }),
     ).toThrow('Motion profile texture caps must be finite positive numbers');
   });
+
+  it('clamps subpixel dimensions before enforcing the texture budget', () => {
+    const options = textureCaptureOptions(0.5, 5_000_000, 2, defaultMotionProfile);
+    const totalPixels = options.width * options.height * options.pixelRatio * options.pixelRatio;
+
+    expect(options.width).toBe(1);
+    expect(totalPixels).toBeLessThanOrEqual(defaultMotionProfile.maxTexturePixels);
+  });
+
+  it('rejects finite dimensions that overflow capture math', () => {
+    expect(() => textureCaptureOptions(Number.MAX_VALUE, Number.MAX_VALUE, 2, defaultMotionProfile)).toThrow(
+      'Capture dimensions exceed supported range',
+    );
+  });
 });
 
 describe('captureElement', () => {

@@ -73,6 +73,22 @@ describe('hasWebGl', () => {
 
     expect(hasWebGl(documentRef)).toBe(false);
   });
+
+  it('falls back to WebGL when the WebGL2 probe throws', () => {
+    const getContext = vi.fn((name: string) => {
+      if (name === 'webgl2') {
+        throw new Error('webgl2 blocked');
+      }
+      return { label: 'webgl' };
+    });
+    const documentRef = {
+      createElement: vi.fn(() => ({ getContext })),
+    } as unknown as Document;
+
+    expect(hasWebGl(documentRef)).toBe(true);
+    expect(getContext).toHaveBeenNthCalledWith(1, 'webgl2');
+    expect(getContext).toHaveBeenNthCalledWith(2, 'webgl');
+  });
 });
 
 describe('browserMotionMode', () => {
@@ -96,7 +112,7 @@ describe('browserMotionMode', () => {
     window.matchMedia = vi.fn(() => ({ matches: false } as MediaQueryList));
     document.createElement = vi.fn(() => ({
       getContext: vi.fn((name: string) => (name === 'webgl2' ? { label: 'webgl2' } : null)),
-    })) as typeof document.createElement;
+    })) as unknown as typeof document.createElement;
     vi.stubGlobal('HTMLCanvasElement', class HTMLCanvasElementStub {});
 
     expect(browserMotionMode()).toBe('full');
@@ -106,7 +122,7 @@ describe('browserMotionMode', () => {
     window.matchMedia = vi.fn(() => ({ matches: true } as MediaQueryList));
     document.createElement = vi.fn(() => ({
       getContext: vi.fn(() => null),
-    })) as typeof document.createElement;
+    })) as unknown as typeof document.createElement;
     // @ts-expect-error exercise undefined capture support
     delete globalThis.HTMLCanvasElement;
 

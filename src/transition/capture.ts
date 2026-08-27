@@ -1,0 +1,81 @@
+import { toCanvas as htmlToCanvas } from 'html-to-image';
+
+import type { CaptureOptions, MotionProfile } from './types';
+
+type ToCanvas = (element: HTMLElement, options: {
+  pixelRatio: number;
+  width: number;
+  height: number;
+  cacheBust: boolean;
+}) => Promise<HTMLCanvasElement>;
+
+function isFinitePositive(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
+export function textureCaptureOptions(
+  width: number,
+  height: number,
+  devicePixelRatio: number,
+  profile: MotionProfile,
+): CaptureOptions {
+  if (!isFinitePositive(width) || !isFinitePositive(height)) {
+    throw new Error('Capture dimensions must be finite positive numbers');
+  }
+
+  if (!isFinitePositive(devicePixelRatio)) {
+    throw new Error('Device pixel ratio must be a finite positive number');
+  }
+
+  if (!isFinitePositive(profile.maxTextureDpr) || !isFinitePositive(profile.maxTexturePixels)) {
+    throw new Error('Motion profile texture caps must be finite positive numbers');
+  }
+
+  const boundedWidth = Math.max(1, width);
+  const boundedHeight = Math.max(1, height);
+  const requestedDpr = Math.min(devicePixelRatio, profile.maxTextureDpr);
+  const boundedArea = boundedWidth * boundedHeight;
+
+  if (!Number.isFinite(boundedArea)) {
+    throw new Error('Capture dimensions exceed supported range');
+  }
+
+  const requestedPixels = boundedArea * requestedDpr * requestedDpr;
+
+  if (!Number.isFinite(requestedPixels)) {
+    throw new Error('Capture dimensions exceed supported range');
+  }
+
+  const pixelScale =
+    requestedPixels > profile.maxTexturePixels
+      ? Math.sqrt(profile.maxTexturePixels / requestedPixels)
+      : 1;
+  let pixelRatio = requestedDpr * pixelScale;
+  const totalPixels = boundedArea * pixelRatio * pixelRatio;
+
+  if (totalPixels > profile.maxTexturePixels) {
+    pixelRatio *= Math.sqrt(profile.maxTexturePixels / totalPixels);
+  }
+
+  return {
+    pixelRatio,
+    width: boundedWidth,
+    height: boundedHeight,
+  };
+}
+
+export async function captureElement(
+  element: HTMLElement,
+  profile: MotionProfile,
+  toCanvas: ToCanvas = htmlToCanvas,
+  devicePixelRatio: number = window.devicePixelRatio,
+): Promise<HTMLCanvasElement> {
+  const { width, height } = element.getBoundingClientRect();
+
+  if (width <= 0 || height <= 0) {
+    throw new Error('Cannot capture an element with empty bounds');
+  }
+
+  const options = textureCaptureOptions(width, height, devicePixelRatio, profile);
+  return toCanvas(element, { ...options, cacheBust: true });
+}
