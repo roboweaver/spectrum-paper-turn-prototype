@@ -15,6 +15,12 @@ body {
 
 button { font: inherit; }
 
+[data-transition-state='preparing'],
+[data-transition-state='opening'],
+[data-transition-state='closing'] {
+  cursor: progress;
+}
+
 .demo-shell {
   position: relative;
   min-height: 100vh;
@@ -99,12 +105,34 @@ sp-card { width: 100%; min-height: 330px; }
   border-radius: 8px;
 }
 [data-transition-hidden='true'] { visibility: hidden; }
+[data-transition-busy='true'] { pointer-events: none; }
 
 .paper-turn-overlay {
   position: fixed;
   z-index: 30;
   inset: 0;
   pointer-events: none;
+}
+
+.paper-turn-overlay canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 600px) {
+  .list-surface,
+  .detail-surface {
+    padding: 20px;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  sp-card {
+    min-height: 280px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
