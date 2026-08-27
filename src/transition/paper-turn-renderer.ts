@@ -8,6 +8,7 @@ import {
   OrthographicCamera,
   Scene,
   ShaderMaterial,
+  SRGBColorSpace,
   WebGLRenderer,
 } from 'three';
 
@@ -35,6 +36,19 @@ function validatePositiveInteger(value: number, field: string): void {
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(`Invalid ${field}: expected an integer greater than or equal to 1.`);
   }
+}
+
+function validateUnitInterval(value: number, field: string): void {
+  validateFiniteNumber(value, field);
+
+  if (value < 0 || value > 1) {
+    throw new Error(`Invalid ${field}: expected a number between 0 and 1 inclusive.`);
+  }
+}
+
+function resolveDevicePixelRatio(documentRef: Document): number {
+  const devicePixelRatio = documentRef.defaultView?.devicePixelRatio ?? 1;
+  return Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
 }
 
 function removeNode(node: ChildNode | null | undefined): void {
@@ -134,7 +148,9 @@ export class PaperTurnRenderer implements PaperRenderer {
     validatePositiveInteger(input.profile.meshColumns, 'profile.meshColumns');
     validatePositiveInteger(input.profile.meshRows, 'profile.meshRows');
     validatePositiveNumber(input.profile.maxTextureDpr, 'profile.maxTextureDpr');
-    validateFiniteNumber(input.profile.shadowStrength, 'profile.shadowStrength');
+    validateUnitInterval(input.profile.shadowStrength, 'profile.shadowStrength');
+    validateFiniteNumber(input.destinationRect.left, 'destinationRect.left');
+    validateFiniteNumber(input.destinationRect.top, 'destinationRect.top');
     validatePositiveNumber(input.destinationRect.width, 'destinationRect.width');
     validatePositiveNumber(input.destinationRect.height, 'destinationRect.height');
 
@@ -162,9 +178,7 @@ export class PaperTurnRenderer implements PaperRenderer {
       const renderer = new WebGLRenderer({ alpha: true, antialias: false });
       resources.renderer = renderer;
 
-      const devicePixelRatio = Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
-        ? window.devicePixelRatio
-        : 1;
+      const devicePixelRatio = resolveDevicePixelRatio(documentRef);
       renderer.setPixelRatio(Math.min(devicePixelRatio, input.profile.maxTextureDpr));
       renderer.setSize(input.destinationRect.width, input.destinationRect.height, false);
       overlay.append(renderer.domElement);
@@ -193,6 +207,7 @@ export class PaperTurnRenderer implements PaperRenderer {
       geometry.setIndex(buildMeshIndices(input.profile.meshColumns, input.profile.meshRows));
 
       const texture = new CanvasTexture(input.texture);
+      texture.colorSpace = SRGBColorSpace;
       resources.texture = texture;
 
       const paperMaterial = new ShaderMaterial({
