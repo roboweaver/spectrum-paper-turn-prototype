@@ -34,8 +34,57 @@ export function vertexIndex(corner: Corner, columns: number, rows: number): numb
   return uv.y * rows * (columns + 1) + uv.x * columns;
 }
 
-function clamp(progress: number): number {
+function clampUnitInterval(progress: number): number {
   return Math.min(1, Math.max(0, progress));
+}
+
+function validateFiniteNumber(value: number, field: string): void {
+  if (!Number.isFinite(value)) {
+    throw new Error(`Invalid ${field}: expected a finite number.`);
+  }
+}
+
+function validatePositiveNumber(value: number, field: string): void {
+  validateFiniteNumber(value, field);
+
+  if (value <= 0) {
+    throw new Error(`Invalid ${field}: expected a number greater than 0.`);
+  }
+}
+
+function validatePositiveInteger(value: number, field: string): void {
+  validateFiniteNumber(value, field);
+
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`Invalid ${field}: expected an integer greater than or equal to 1.`);
+  }
+}
+
+function validateRect(rect: Rect, field: string): void {
+  validateFiniteNumber(rect.left, `${field}.left`);
+  validateFiniteNumber(rect.top, `${field}.top`);
+  validatePositiveNumber(rect.width, `${field}.width`);
+  validatePositiveNumber(rect.height, `${field}.height`);
+}
+
+function validateProfile(profile: MotionProfile): void {
+  validatePositiveInteger(profile.meshColumns, 'profile.meshColumns');
+  validatePositiveInteger(profile.meshRows, 'profile.meshRows');
+  validatePositiveNumber(profile.foldSoftness, 'profile.foldSoftness');
+  validateFiniteNumber(profile.bendDepth, 'profile.bendDepth');
+  validateFiniteNumber(profile.edgeCurvature, 'profile.edgeCurvature');
+}
+
+function easedProgress(progress: number, profile: MotionProfile): number {
+  validateFiniteNumber(progress, 'progress');
+
+  const eased = profile.easing(clampUnitInterval(progress));
+
+  if (!Number.isFinite(eased)) {
+    throw new Error('Invalid profile.easing: expected a finite number.');
+  }
+
+  return clampUnitInterval(eased);
 }
 
 function mix(a: number, b: number, progress: number): number {
@@ -113,6 +162,9 @@ function percent(value: number): string {
 }
 
 export function revealClipPath(rect: Rect, grabbed: Corner, progress: number): string {
+  validateRect(rect, 'rect');
+  validateFiniteNumber(progress, 'progress');
+
   if (progress <= 0) {
     const point = cornerPoint(rect, grabbed);
     const x = ((point.x - rect.left) / rect.width) * 100;
@@ -141,7 +193,11 @@ export function buildPaperFrame(
   progress: number,
   profile: MotionProfile,
 ): PaperFrame {
-  const eased = profile.easing(clamp(progress));
+  validateRect(source, 'source');
+  validateRect(destination, 'destination');
+  validateProfile(profile);
+
+  const eased = easedProgress(progress, profile);
   const start = orderedCorners(source);
   const end = endCorners(source, destination, grabbed);
   const vertexCount = (profile.meshColumns + 1) * (profile.meshRows + 1);
