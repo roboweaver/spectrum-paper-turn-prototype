@@ -257,6 +257,215 @@ describe('TransitionCoordinator', () => {
     expect(view.focusListFallback).not.toHaveBeenCalled();
   });
 
+  it('focuses the list fallback when neither the trigger nor source is available before settling idle', async () => {
+    const { coordinator, request, view } = harness();
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    request.trigger = trigger;
+    const triggerFocus = vi.spyOn(trigger, 'focus');
+
+    await coordinator.open(request);
+    trigger.remove();
+    vi.mocked(view.resolveSource).mockReturnValue(null);
+    await coordinator.close();
+
+    expect(triggerFocus).not.toHaveBeenCalled();
+    expect(view.focusListFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the active transition before focus restoration can re-enter open', async () => {
+    const { coordinator, request } = harness();
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    request.trigger = trigger;
+
+    let reopened: Promise<void> | null = null;
+    let activeDuringFocus: ActiveSnapshot | null | undefined;
+    trigger.addEventListener(
+      'focus',
+      () => {
+        activeDuringFocus = getActiveTransition(coordinator);
+        reopened ??= coordinator.open(request);
+      },
+      { once: true },
+    );
+
+    await coordinator.open(request);
+    await coordinator.close();
+    await expect(reopened).resolves.toBeUndefined();
+    expect(activeDuringFocus).toBeNull();
+    expect(coordinator.state).toBe('open');
+    expect(getActiveTransition(coordinator)).toEqual(
+      expect.objectContaining({
+        request,
+        requestedEndpoint: 'open',
+      }),
+    );
+  });
+
+  it('clears the active transition before publishing the idle state change', async () => {
+    const { coordinator, request } = harness();
+
+    let reopened: Promise<void> | null = null;
+    let activeWhenIdlePublished: ActiveSnapshot | null | undefined;
+    coordinator.addEventListener('statechange', () => {
+      if (coordinator.state === 'idle') {
+        activeWhenIdlePublished = getActiveTransition(coordinator);
+        reopened ??= coordinator.open(request);
+      }
+    });
+
+    await coordinator.open(request);
+    await coordinator.close();
+    await expect(reopened).resolves.toBeUndefined();
+    expect(activeWhenIdlePublished).toBeNull();
+    expect(coordinator.state).toBe('open');
+    expect(getActiveTransition(coordinator)).toEqual(
+      expect.objectContaining({
+        request,
+        requestedEndpoint: 'open',
+      }),
+    );
+  });
+
+  it('re-resolves the current source at idle settle when the trigger is disconnected during close', async () => {
+    const { coordinator, dependencies, request, source, view } = harness();
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    request.trigger = trigger;
+    vi.mocked(view.resolveSource).mockImplementation((sourceId: string) => {
+      return (
+        Array.from(document.body.querySelectorAll<HTMLElement>('[data-source-id]')).find(
+          (element) => element.dataset.sourceId === sourceId,
+        ) ?? null
+      );
+    });
+
+    const triggerFocus = vi.spyOn(trigger, 'focus');
+    const sourceFocus = vi.spyOn(source, 'focus');
+    const replacement = document.createElement('button');
+    replacement.dataset.sourceId = 'one';
+    const replacementFocus = vi.spyOn(replacement, 'focus');
+
+    await coordinator.open(request);
+
+    let release!: () => void;
+    dependencies.animate = vi.fn(
+      async (_from, to, _duration, onFrame, signal) =>
+        new Promise<void>((resolve, reject) => {
+          onFrame(1);
+          release = () => {
+            if (signal.aborted) {
+              reject(makeAbortError());
+              return;
+            }
+
+            onFrame(to);
+            resolve();
+          };
+        }),
+    );
+
+    const closing = coordinator.close();
+    await flushMicrotasks();
+    trigger.remove();
+    source.remove();
+    document.body.append(replacement);
+    release();
+    await closing;
+
+    expect(triggerFocus).not.toHaveBeenCalled();
+    expect(sourceFocus).not.toHaveBeenCalled();
+    expect(replacementFocus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(view.focusListFallback).not.toHaveBeenCalled();
+  });
+
+  it('prefers the current re-resolved source over a stale connected source snapshot', async () => {
+    const { coordinator, dependencies, request, source, view } = harness();
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    request.trigger = trigger;
+    vi.mocked(view.resolveSource).mockImplementation((sourceId: string) => {
+      return (
+        Array.from(document.body.querySelectorAll<HTMLElement>('[data-source-id]')).find(
+          (element) => element.dataset.sourceId === sourceId,
+        ) ?? null
+      );
+    });
+
+    const triggerFocus = vi.spyOn(trigger, 'focus');
+    const sourceFocus = vi.spyOn(source, 'focus');
+    const replacement = document.createElement('button');
+    replacement.dataset.sourceId = 'one';
+    const replacementFocus = vi.spyOn(replacement, 'focus');
+
+    await coordinator.open(request);
+
+    let release!: () => void;
+    dependencies.animate = vi.fn(
+      async (_from, to, _duration, onFrame, signal) =>
+        new Promise<void>((resolve, reject) => {
+          onFrame(1);
+          release = () => {
+            if (signal.aborted) {
+              reject(makeAbortError());
+              return;
+            }
+
+            onFrame(to);
+            resolve();
+          };
+        }),
+    );
+
+    const closing = coordinator.close();
+    await flushMicrotasks();
+    trigger.remove();
+    document.body.prepend(replacement);
+    release();
+    await closing;
+
+    expect(triggerFocus).not.toHaveBeenCalled();
+    expect(sourceFocus).not.toHaveBeenCalled();
+    expect(replacementFocus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(view.focusListFallback).not.toHaveBeenCalled();
+  });
+
+  it('re-resolves the current source after idle listeners update the list', async () => {
+    const { coordinator, request, source, view } = harness();
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    request.trigger = trigger;
+    vi.mocked(view.resolveSource).mockImplementation((sourceId: string) => {
+      return (
+        Array.from(document.body.querySelectorAll<HTMLElement>('[data-source-id]')).find(
+          (element) => element.dataset.sourceId === sourceId,
+        ) ?? null
+      );
+    });
+
+    const triggerFocus = vi.spyOn(trigger, 'focus');
+    const sourceFocus = vi.spyOn(source, 'focus');
+    const replacement = document.createElement('button');
+    replacement.dataset.sourceId = 'one';
+    const replacementFocus = vi.spyOn(replacement, 'focus');
+
+    coordinator.addEventListener('statechange', () => {
+      if (coordinator.state === 'idle') {
+        trigger.remove();
+        source.replaceWith(replacement);
+      }
+    });
+
+    await coordinator.open(request);
+    await coordinator.close();
+
+    expect(triggerFocus).not.toHaveBeenCalled();
+    expect(sourceFocus).not.toHaveBeenCalled();
+    expect(replacementFocus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(view.focusListFallback).not.toHaveBeenCalled();
+  });
+
   it('remeasures the current source bounds before closing and uses them for the reverse renderer', async () => {
     const { coordinator, dependencies, request, view } = harness();
 
@@ -338,15 +547,17 @@ describe('TransitionCoordinator', () => {
     expect(coordinator.state).toBe('open');
   });
 
-  it('focuses the list fallback when the source no longer exists before closing', async () => {
-    const { coordinator, request, view } = harness();
+  it('focuses the original trigger when the source no longer exists before closing', async () => {
+    const { coordinator, request, trigger, view } = harness();
+    const focus = vi.spyOn(trigger, 'focus');
 
     await coordinator.open(request);
     vi.mocked(view.resolveSource).mockReturnValue(null);
 
     await coordinator.close();
 
-    expect(view.focusListFallback).toHaveBeenCalledTimes(1);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(view.focusListFallback).not.toHaveBeenCalled();
   });
 
   it('opens in fallback mode without attempting capture or renderer creation', async () => {
@@ -425,6 +636,64 @@ describe('TransitionCoordinator', () => {
 
     await expect(coordinator.open(request)).resolves.toBeUndefined();
     expect(coordinator.state).toBe('open');
+  });
+
+  it('preserves the original open setup error when idle recovery cleanup also throws', async () => {
+    const prepareFailure = new Error('prepare failed');
+    const cleanupFailure = new Error('list cleanup failed');
+    const { coordinator, request, view } = harness();
+    const report = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(view.prepareDetail).mockImplementationOnce(() => {
+      throw prepareFailure;
+    });
+    vi.mocked(view.setListVisible).mockImplementationOnce(() => {
+      throw cleanupFailure;
+    });
+
+    await expect(coordinator.open(request)).rejects.toBe(prepareFailure);
+
+    expect(report).toHaveBeenCalledWith(
+      'Paper-turn open setup cleanup failed while preserving the original error.',
+      cleanupFailure,
+      prepareFailure,
+    );
+    expect(coordinator.state).toBe('idle');
+    expect(view.restoreScroll).toHaveBeenCalledTimes(1);
+    expect(getActiveTransition(coordinator)).toBeNull();
+  });
+
+  it('recovers to stable open cleanup when busy setup throws during close and allows retry', async () => {
+    const busyFailure = new Error('close busy failed');
+    const { coordinator, request, view } = harness();
+
+    await coordinator.open(request);
+    vi.mocked(view.focusDetailHeading).mockClear();
+    vi.mocked(view.setBusy).mockImplementationOnce(() => {
+      throw busyFailure;
+    });
+
+    await expect(coordinator.close()).rejects.toBe(busyFailure);
+
+    expect(coordinator.state).toBe('open');
+    expect(view.setBusy).toHaveBeenLastCalledWith(false);
+    expect(view.setDetailClip).toHaveBeenLastCalledWith(FULL_CLIP);
+    expect(view.setListVisible).toHaveBeenLastCalledWith(false);
+    expect(view.setDetailVisible).toHaveBeenLastCalledWith(true);
+    expect(view.setDetailInert).toHaveBeenLastCalledWith(false);
+    expect(view.focusDetailHeading).toHaveBeenCalledTimes(1);
+    expect(getActiveTransition(coordinator)).toEqual(
+      expect.objectContaining({
+        controller: null,
+        renderer: null,
+        requestedEndpoint: 'idle',
+        interruption: null,
+        progress: 1,
+      }),
+    );
+
+    vi.mocked(view.setBusy).mockImplementation(() => undefined);
+    await expect(coordinator.close()).resolves.toBeUndefined();
+    expect(coordinator.state).toBe('idle');
   });
 
   it('recovers to stable open cleanup when list visibility throws during close and allows retry', async () => {

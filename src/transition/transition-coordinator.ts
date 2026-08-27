@@ -21,6 +21,10 @@ interface ActiveTransition {
 }
 
 const FULL_CLIP = 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)';
+const OPEN_SETUP_RECOVERY_ERROR =
+  'Paper-turn open setup cleanup failed while preserving the original error.';
+const CLOSE_SETUP_RECOVERY_ERROR =
+  'Paper-turn close setup cleanup failed while preserving the original error.';
 
 function getErrorName(error: unknown): string | undefined {
   if (typeof error !== 'object' || error === null || !('name' in error)) {
@@ -60,36 +64,32 @@ export class TransitionCoordinator extends EventTarget {
     }
 
     this.setState('preparing');
-    this.view.setBusy(true);
-    this.view.freezeScroll();
-    this.view.prepareDetail(request.sourceId);
-    this.view.setDetailVisible(true);
-    this.view.setDetailInert(true);
-
-    const source = this.view.resolveSource(request.sourceId);
-    if (!source) {
-      this.recoverMissingOpenSource();
-      throw new Error(`Source card no longer exists: ${request.sourceId}`);
-    }
-
-    this.active = {
-      request,
-      source,
-      renderer: null,
-      controller: null,
-      progress: 0,
-      requestedEndpoint: 'open',
-      interruption: null,
-    };
-
     let mode: MotionMode;
     try {
-      mode = this.dependencies.selectMotionMode();
-    } catch (error) {
-      if (this.active) {
-        this.settleIdle(true);
+      this.view.setBusy(true);
+      this.view.freezeScroll();
+      this.view.prepareDetail(request.sourceId);
+      this.view.setDetailVisible(true);
+      this.view.setDetailInert(true);
+
+      const source = this.view.resolveSource(request.sourceId);
+      if (!source) {
+        throw new Error(`Source card no longer exists: ${request.sourceId}`);
       }
 
+      this.active = {
+        request,
+        source,
+        renderer: null,
+        controller: null,
+        progress: 0,
+        requestedEndpoint: 'open',
+        interruption: null,
+      };
+
+      mode = this.dependencies.selectMotionMode();
+    } catch (error) {
+      this.recoverOpenSetupFailure(error);
       throw error;
     }
 
@@ -101,21 +101,18 @@ export class TransitionCoordinator extends EventTarget {
       throw new Error(`Cannot close while transition state is ${this.state}`);
     }
 
-    this.active.requestedEndpoint = 'idle';
-    this.active.interruption = null;
-    this.active.source = this.view.resolveSource(this.active.request.sourceId);
-    this.view.setBusy(true);
-    this.view.setDetailInert(true);
-    this.view.setListVisible(true);
-
     let mode: MotionMode;
     try {
+      this.active.requestedEndpoint = 'idle';
+      this.active.interruption = null;
+      this.active.source = this.view.resolveSource(this.active.request.sourceId);
+      this.view.setBusy(true);
+      this.view.setDetailInert(true);
+      this.view.setListVisible(true);
+
       mode = this.dependencies.selectMotionMode();
     } catch (error) {
-      if (this.active) {
-        this.settleOpen();
-      }
-
+      this.recoverCloseSetupFailure(error);
       throw error;
     }
 
@@ -287,6 +284,8 @@ export class TransitionCoordinator extends EventTarget {
   }
 
   private settleIdle(skipFocus = false): void {
+    const request = this.active?.request ?? null;
+    const trigger = request?.trigger ?? null;
     const source = this.active?.source ?? null;
 
     this.disposeRenderer();
@@ -305,34 +304,95 @@ export class TransitionCoordinator extends EventTarget {
     this.view.setDetailVisible(false);
     this.view.setListVisible(true);
     this.view.restoreScroll();
+    this.active = null;
     this.setState('idle');
 
     if (!skipFocus) {
-      if (source?.isConnected) {
-        source.focus({ preventScroll: true });
-      } else if (this.active !== null || source === null) {
-        this.view.focusListFallback();
+      if (trigger?.isConnected) {
+        trigger.focus({ preventScroll: true });
+      } else {
+        const currentSource = request ? this.resolveCurrentSourceForFocus(request.sourceId, source) : source;
+        if (currentSource?.isConnected) {
+          currentSource.focus({ preventScroll: true });
+        } else {
+          this.view.focusListFallback();
+        }
       }
     }
-
-    this.active = null;
   }
 
-  private recoverMissingOpenSource(): void {
-    this.view.setBusy(false);
-    this.view.setDetailInert(true);
-    this.view.setDetailVisible(false);
-    this.view.setListVisible(true);
-    this.view.restoreScroll();
+  private recoverOpenSetupFailure(originalError: unknown): void {
+    const source = this.active?.source ?? null;
+
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.disposeRenderer());
+    if (source) {
+      this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () =>
+        this.view.setSourceHidden(source, false),
+      );
+    }
+
+    if (this.active) {
+      this.active.controller = null;
+      this.active.interruption = null;
+      this.active.progress = 0;
+    }
+
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.setBusy(false));
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailInert(true));
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailVisible(false));
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.setListVisible(true));
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.restoreScroll());
     this.active = null;
-    this.setState('idle');
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.setState('idle'));
+  }
+
+  private recoverCloseSetupFailure(originalError: unknown): void {
+    const source = this.active?.source ?? null;
+
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.disposeRenderer());
+    if (source) {
+      this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () =>
+        this.view.setSourceHidden(source, false),
+      );
+    }
+
+    if (this.active) {
+      this.active.controller = null;
+      this.active.interruption = null;
+      this.active.progress = 1;
+    }
+
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setBusy(false));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailClip(FULL_CLIP));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setListVisible(false));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailVisible(true));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailInert(false));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.setState('open'));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.focusDetailHeading());
   }
 
   private disposeRenderer(): void {
-    this.active?.renderer?.dispose();
-
+    const renderer = this.active?.renderer ?? null;
     if (this.active) {
       this.active.renderer = null;
+    }
+
+    renderer?.dispose();
+  }
+
+  private runSetupRecoveryStep(message: string, originalError: unknown, step: () => void): void {
+    try {
+      step();
+    } catch (cleanupError) {
+      console.error(message, cleanupError, originalError);
+    }
+  }
+
+  private resolveCurrentSourceForFocus(sourceId: string, previousSource: HTMLElement | null): HTMLElement | null {
+    try {
+      return this.view.resolveSource(sourceId);
+    } catch {
+      return previousSource;
     }
   }
 
