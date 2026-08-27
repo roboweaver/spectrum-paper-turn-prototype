@@ -307,14 +307,16 @@ describe('paper shaders', () => {
   });
 
   it('uses front and reverse fragment shading rules', () => {
+    const normalizedShader = paperTurnFragmentShader.replace(/\s+/g, ' ').trim();
+
     expect(paperTurnFragmentShader).toContain('uniform sampler2D paperTexture;');
     expect(paperTurnFragmentShader).toContain('uniform float shadowStrength;');
     expect(paperTurnFragmentShader).toContain('vec3(0.86, 0.87, 0.89)');
     expect(paperTurnFragmentShader).toContain('front.rgb * 0.2');
     expect(paperTurnFragmentShader).toContain('0.78 + vShade * 0.32');
-    expect(paperTurnFragmentShader).toContain('gl_FrontFacing');
-    expect(paperTurnFragmentShader).toContain('shadowStrength * 0.35');
-    expect(paperTurnFragmentShader).toContain('front.a');
+    expect(normalizedShader).toContain(
+      'vec3 face = gl_FrontFacing ? front.rgb : reverse; float reverseShadow = gl_FrontFacing ? 0.0 : shadowStrength * 0.35; gl_FragColor = vec4(face * highlight * (1.0 - reverseShadow), front.a);',
+    );
   });
 });
 
@@ -322,10 +324,16 @@ describe('PaperTurnRenderer', () => {
   it('creates the disposable scene and updates mesh buffers on render', () => {
     const input = createInput();
     const renderer = new PaperTurnRenderer(input);
+    const overlay = document.body.querySelector('.paper-turn-overlay');
+    const canvas = document.querySelector('canvas');
 
-    expect(document.body.querySelector('.paper-turn-overlay')?.getAttribute('data-mesh-vertices')).toBe(
+    expect(overlay?.getAttribute('data-mesh-vertices')).toBe(
       String((input.profile.meshColumns + 1) * (input.profile.meshRows + 1)),
     );
+    expect(document.body.children).toHaveLength(1);
+    expect(document.body.firstElementChild).toBe(overlay);
+    expect(overlay?.children).toHaveLength(1);
+    expect(overlay?.firstElementChild).toBe(canvas);
     expect(document.body.querySelectorAll('canvas')).toHaveLength(1);
     expect(threeMock.renderers[0]?.setPixelRatio).toHaveBeenCalledWith(input.profile.maxTextureDpr);
     expect(threeMock.renderers[0]?.setSize).toHaveBeenCalledWith(
@@ -366,7 +374,7 @@ describe('PaperTurnRenderer', () => {
     expect(Array.from(geometry.attributes.shade!.array)).toEqual(Array.from(expected.shade));
     expect(geometry.attributes.position!.needsUpdate).toBe(true);
     expect(geometry.attributes.shade!.needsUpdate).toBe(true);
-    expect(document.body.querySelector('.paper-turn-overlay')?.getAttribute('data-progress')).toBe('0.375');
+    expect(overlay?.getAttribute('data-progress')).toBe('0.375');
     expect(threeMock.renderers[0]?.render).toHaveBeenCalledTimes(1);
     expect(threeMock.scenes[0]?.objects).toHaveLength(2);
     expect(threeMock.scenes[0]?.objects[0]).toBe(threeMock.meshes[1]);
