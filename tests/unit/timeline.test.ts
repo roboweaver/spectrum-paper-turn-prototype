@@ -108,7 +108,7 @@ describe('animateProgress', () => {
   });
 
   it('rejects when onFrame throws and does not orphan or schedule a frame', async () => {
-    const requestFrame = vi.fn((callback: FrameRequestCallback) => callback);
+    const requestFrame = vi.fn<FrameClock['requestFrame']>(() => 1);
     const failure = new Error('render failed');
     const promise = animateProgress(
       0,
