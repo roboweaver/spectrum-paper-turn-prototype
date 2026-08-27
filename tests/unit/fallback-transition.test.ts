@@ -19,9 +19,10 @@ function createAnimatedElement(animation: FakeAnimation): {
 
 describe('createFallbackRunner', () => {
   it('runs the open fallback animation with the exact keyframes and options', async () => {
+    const finished = Promise.resolve({} as Animation);
     const animation = {
       cancel: vi.fn(),
-      finished: Promise.resolve(),
+      finished,
     } satisfies FakeAnimation;
     const { element, animate } = createAnimatedElement(animation);
     const runner = createFallbackRunner(element);
@@ -42,9 +43,10 @@ describe('createFallbackRunner', () => {
   });
 
   it('runs the close fallback animation with the exact keyframes and options', async () => {
+    const finished = Promise.resolve({} as Animation);
     const animation = {
       cancel: vi.fn(),
-      finished: Promise.resolve(),
+      finished,
     } satisfies FakeAnimation;
     const { element, animate } = createAnimatedElement(animation);
     const runner = createFallbackRunner(element);
@@ -65,9 +67,10 @@ describe('createFallbackRunner', () => {
   });
 
   it('rejects invalid durations before animating', async () => {
+    const finished = Promise.resolve({} as Animation);
     const animation = {
       cancel: vi.fn(),
-      finished: Promise.resolve(),
+      finished,
     } satisfies FakeAnimation;
     const { element, animate } = createAnimatedElement(animation);
     const runner = createFallbackRunner(element);
@@ -78,9 +81,10 @@ describe('createFallbackRunner', () => {
   });
 
   it('rejects an already-aborted signal before starting the animation', async () => {
+    const finished = Promise.resolve({} as Animation);
     const animation = {
       cancel: vi.fn(),
-      finished: Promise.resolve(),
+      finished,
     } satisfies FakeAnimation;
     const { element, animate } = createAnimatedElement(animation);
     const controller = new AbortController();
@@ -119,9 +123,10 @@ describe('createFallbackRunner', () => {
   it('removes the abort listener after a successful animation', async () => {
     const controller = new AbortController();
     const removeEventListener = vi.spyOn(controller.signal, 'removeEventListener');
+    const finished = Promise.resolve({} as Animation);
     const animation = {
       cancel: vi.fn(),
-      finished: Promise.resolve(),
+      finished,
     } satisfies FakeAnimation;
     const { element } = createAnimatedElement(animation);
     const runner = createFallbackRunner(element);

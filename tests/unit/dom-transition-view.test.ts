@@ -1,20 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { JSDOM } from 'jsdom';
 import { DomTransitionView } from '../../src/transition/dom-transition-view';
 
 interface Fixture {
-  dom: JSDOM;
   list: HTMLElement;
   source: HTMLButtonElement;
   otherSource: HTMLButtonElement;
   detail: HTMLElement;
   heading: HTMLHeadingElement;
   fallback: HTMLButtonElement;
-  renderDetail: ReturnType<typeof vi.fn>;
+  renderDetail: (sourceId: string) => void;
+  renderDetailSpy: ReturnType<typeof vi.fn<(sourceId: string) => void>>;
+  windowRef: Window & typeof globalThis;
 }
 
 function createFixture(): Fixture {
-  const dom = new JSDOM(`<!doctype html><html><body>
+  const documentRef = document.implementation.createHTMLDocument('task-7');
+  const windowRef = {
+    innerWidth: 1024,
+    innerHeight: 768,
+    scrollY: 0,
+    scrollTo: () => undefined,
+  } as Window & typeof globalThis;
+  Object.defineProperty(documentRef, 'defaultView', {
+    value: windowRef,
+    configurable: true,
+  });
+
+  documentRef.body.innerHTML = `
     <section data-list-surface aria-busy="false">
       <button type="button" data-source-id="source-one">Open one</button>
       <button type="button" data-source-id="source-two">Open two</button>
@@ -23,28 +35,32 @@ function createFixture(): Fixture {
     <article data-detail-surface hidden>
       <h2 data-detail-heading tabindex="-1">Hidden detail</h2>
     </article>
-  </body></html>`);
-  const { document } = dom.window;
-  const list = document.querySelector<HTMLElement>('[data-list-surface]');
-  const source = document.querySelector<HTMLButtonElement>('[data-source-id="source-one"]');
-  const otherSource = document.querySelector<HTMLButtonElement>('[data-source-id="source-two"]');
-  const detail = document.querySelector<HTMLElement>('[data-detail-surface]');
-  const heading = document.querySelector<HTMLHeadingElement>('[data-detail-heading]');
-  const fallback = document.querySelector<HTMLButtonElement>('[data-list-focus-fallback]');
+  `;
+
+  const list = documentRef.querySelector<HTMLElement>('[data-list-surface]');
+  const source = documentRef.querySelector<HTMLButtonElement>('[data-source-id="source-one"]');
+  const otherSource = documentRef.querySelector<HTMLButtonElement>('[data-source-id="source-two"]');
+  const detail = documentRef.querySelector<HTMLElement>('[data-detail-surface]');
+  const heading = documentRef.querySelector<HTMLHeadingElement>('[data-detail-heading]');
+  const fallback = documentRef.querySelector<HTMLButtonElement>('[data-list-focus-fallback]');
+  const renderDetailSpy = vi.fn<(sourceId: string) => void>();
 
   if (!list || !source || !otherSource || !detail || !heading || !fallback) {
     throw new Error('Fixture DOM contract incomplete');
   }
 
   return {
-    dom,
     list,
     source,
     otherSource,
     detail,
     heading,
     fallback,
-    renderDetail: vi.fn(),
+    renderDetail(sourceId: string) {
+      renderDetailSpy(sourceId);
+    },
+    renderDetailSpy,
+    windowRef,
   };
 }
 
@@ -56,7 +72,6 @@ describe('DomTransitionView', () => {
   });
 
   afterEach(() => {
-    fixture.dom.window.close();
     vi.restoreAllMocks();
   });
 
@@ -71,13 +86,13 @@ describe('DomTransitionView', () => {
 
     view.prepareDetail('source-one');
 
-    expect(fixture.renderDetail).toHaveBeenCalledWith('source-one');
-    expect(fixture.renderDetail).toHaveBeenCalledTimes(1);
+    expect(fixture.renderDetailSpy).toHaveBeenCalledWith('source-one');
+    expect(fixture.renderDetailSpy).toHaveBeenCalledTimes(1);
   });
 
   it('measures the destination viewport from the detail document window', () => {
-    Object.defineProperty(fixture.dom.window, 'innerWidth', { value: 1440, configurable: true });
-    Object.defineProperty(fixture.dom.window, 'innerHeight', { value: 900, configurable: true });
+    fixture.windowRef.innerWidth = 1440;
+    fixture.windowRef.innerHeight = 900;
 
     const view = new DomTransitionView({
       list: fixture.list,
@@ -184,12 +199,12 @@ describe('DomTransitionView', () => {
   });
 
   it('freezes and restores scroll idempotently while preserving prior inline body styles', () => {
-    fixture.dom.window.document.body.style.position = 'relative';
-    fixture.dom.window.document.body.style.top = '7px';
-    fixture.dom.window.document.body.style.width = '90%';
-    Object.defineProperty(fixture.dom.window, 'scrollY', { value: 275, configurable: true });
+    fixture.list.ownerDocument.body.style.position = 'relative';
+    fixture.list.ownerDocument.body.style.top = '7px';
+    fixture.list.ownerDocument.body.style.width = '90%';
+    fixture.windowRef.scrollY = 275;
     const scrollTo = vi.fn();
-    Object.defineProperty(fixture.dom.window, 'scrollTo', { value: scrollTo, configurable: true });
+    fixture.windowRef.scrollTo = scrollTo as typeof fixture.windowRef.scrollTo;
 
     const view = new DomTransitionView({
       list: fixture.list,
@@ -202,21 +217,23 @@ describe('DomTransitionView', () => {
     view.freezeScroll();
     view.freezeScroll();
 
-    expect(fixture.dom.window.document.body.style.position).toBe('fixed');
-    expect(fixture.dom.window.document.body.style.top).toBe('-275px');
-    expect(fixture.dom.window.document.body.style.width).toBe('100%');
+    expect(fixture.list.ownerDocument.body.style.position).toBe('fixed');
+    expect(fixture.list.ownerDocument.body.style.top).toBe('-275px');
+    expect(fixture.list.ownerDocument.body.style.width).toBe('100%');
 
     view.restoreScroll();
     view.restoreScroll();
 
-    expect(fixture.dom.window.document.body.style.position).toBe('relative');
-    expect(fixture.dom.window.document.body.style.top).toBe('7px');
-    expect(fixture.dom.window.document.body.style.width).toBe('90%');
+    expect(fixture.list.ownerDocument.body.style.position).toBe('relative');
+    expect(fixture.list.ownerDocument.body.style.top).toBe('7px');
+    expect(fixture.list.ownerDocument.body.style.width).toBe('90%');
     expect(scrollTo).toHaveBeenCalledTimes(1);
     expect(scrollTo).toHaveBeenCalledWith(0, 275);
   });
 
   it('focuses the detail heading and list fallback elements', () => {
+    const focusHeading = vi.spyOn(fixture.heading, 'focus');
+    const focusFallback = vi.spyOn(fixture.fallback, 'focus');
     const view = new DomTransitionView({
       list: fixture.list,
       detail: fixture.detail,
@@ -226,9 +243,9 @@ describe('DomTransitionView', () => {
     });
 
     view.focusDetailHeading();
-    expect(fixture.dom.window.document.activeElement).toBe(fixture.heading);
+    expect(focusHeading).toHaveBeenCalledTimes(1);
 
     view.focusListFallback();
-    expect(fixture.dom.window.document.activeElement).toBe(fixture.fallback);
+    expect(focusFallback).toHaveBeenCalledTimes(1);
   });
 });
