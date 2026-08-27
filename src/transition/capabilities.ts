@@ -26,6 +26,7 @@ export function browserMotionMode(): MotionMode {
   if (
     typeof globalThis.matchMedia !== 'function' ||
     globalThis.document === undefined ||
+    typeof globalThis.document.createElement !== 'function' ||
     globalThis.HTMLCanvasElement === undefined
   ) {
     return 'fallback';
