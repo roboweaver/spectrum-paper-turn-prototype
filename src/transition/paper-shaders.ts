@@ -21,12 +21,8 @@ void main() {
   vec3 reverseBase = vec3(0.86, 0.87, 0.89) * 0.8 + front.rgb * 0.2;
   float highlight = 0.78 + vShade * 0.32;
   vec3 reverse = reverseBase * highlight;
-  vec3 color = gl_FrontFacing ? front.rgb : reverse;
-
-  if (!gl_FrontFacing) {
-    color *= 1.0 - shadowStrength * 0.35;
-  }
-
-  gl_FragColor = vec4(color, front.a);
+  vec3 face = gl_FrontFacing ? front.rgb : reverse;
+  float reverseShadow = gl_FrontFacing ? 0.0 : shadowStrength * 0.35;
+  gl_FragColor = vec4(face * highlight * (1.0 - reverseShadow), front.a);
 }
 `;

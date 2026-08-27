@@ -167,7 +167,8 @@ export class PaperTurnRenderer implements PaperRenderer {
         : 1;
       renderer.setPixelRatio(Math.min(devicePixelRatio, input.profile.maxTextureDpr));
       renderer.setSize(input.destinationRect.width, input.destinationRect.height, false);
-      documentRef.body.append(renderer.domElement, overlay);
+      overlay.append(renderer.domElement);
+      documentRef.body.append(overlay);
 
       const camera = new OrthographicCamera(
         input.destinationRect.left,
