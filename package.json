@@ -1,0 +1,31 @@
+{
+  "name": "spectrum-paper-turn-prototype",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:e2e": "playwright test tests/e2e/interaction.spec.ts",
+    "test:visual": "playwright test tests/e2e/visual.spec.ts",
+    "test:all": "npm run test:unit && npm run build && playwright test"
+  },
+  "dependencies": {
+    "@spectrum-web-components/button": "1.12.2",
+    "@spectrum-web-components/card": "1.12.2",
+    "@spectrum-web-components/theme": "1.12.2",
+    "html-to-image": "1.11.13",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.4.0",
+    "@types/three": "0.185.4",
+    "jsdom": "30.0.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}
