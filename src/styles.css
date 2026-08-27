@@ -44,10 +44,15 @@ button { font: inherit; }
 }
 
 .card-grid {
+  margin: 0;
+  padding: 0;
+  list-style: none;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   gap: 24px;
 }
+
+.card-grid-item { min-width: 0; }
 
 .card-trigger {
   display: block;

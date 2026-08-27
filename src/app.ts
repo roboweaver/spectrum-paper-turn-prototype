@@ -12,12 +12,14 @@ export interface DemoApp {
 
 function cardMarkup(id: string, title: string, subtitle: string, description: string, color: string): string {
   return `
-    <button class="card-trigger" data-card-trigger data-source-id="${id}" type="button">
-      <sp-card heading="${title}" subheading="${subtitle}" size="s">
-        <div slot="preview" class="card-preview" style="--card-color: ${color}"></div>
-        <p>${description}</p>
-      </sp-card>
-    </button>
+    <li class="card-grid-item">
+      <button class="card-trigger" data-card-trigger data-source-id="${id}" type="button">
+        <sp-card heading="${title}" subheading="${subtitle}" size="s">
+          <div slot="preview" class="card-preview" style="--card-color: ${color}"></div>
+          <p>${description}</p>
+        </sp-card>
+      </button>
+    </li>
   `;
 }
 
@@ -31,9 +33,9 @@ export function createDemoApp(root: HTMLElement): DemoApp {
             <h1>Paper-turn navigation</h1>
             <p>Choose a card to open a full-page detail surface.</p>
           </header>
-          <div class="card-grid" data-list-focus-fallback tabindex="-1" aria-label="Design topics">
+          <ul class="card-grid" data-list-focus-fallback tabindex="-1" aria-label="Design topics">
             ${cards.map((card) => cardMarkup(card.id, card.title, card.subtitle, card.description, card.color)).join('')}
-          </div>
+          </ul>
         </section>
         <article class="detail-surface" data-detail-surface hidden>
           <div class="detail-toolbar">
