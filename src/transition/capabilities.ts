@@ -12,7 +12,14 @@ function probeContext(
 }
 
 export function hasWebGl(documentRef: Document = document): boolean {
-  const canvas = documentRef.createElement('canvas');
+  let canvas: HTMLCanvasElement;
+
+  try {
+    canvas = documentRef.createElement('canvas');
+  } catch {
+    return false;
+  }
+
   return probeContext(canvas, 'webgl2') || probeContext(canvas, 'webgl');
 }
 
