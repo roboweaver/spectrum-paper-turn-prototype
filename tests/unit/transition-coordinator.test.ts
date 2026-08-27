@@ -224,6 +224,39 @@ describe('TransitionCoordinator', () => {
     expect(getActiveTransition(coordinator)).toBeNull();
   });
 
+  it('focuses the original trigger when it differs from the current source before settling idle', async () => {
+    const { coordinator, request, source, view } = harness();
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    request.trigger = trigger;
+    const triggerFocus = vi.spyOn(trigger, 'focus');
+    const sourceFocus = vi.spyOn(source, 'focus');
+
+    await coordinator.open(request);
+    await coordinator.close();
+
+    expect(triggerFocus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(sourceFocus).not.toHaveBeenCalled();
+    expect(view.focusListFallback).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the current source when the original trigger is disconnected before settling idle', async () => {
+    const { coordinator, request, source, view } = harness();
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    request.trigger = trigger;
+    const triggerFocus = vi.spyOn(trigger, 'focus');
+    const sourceFocus = vi.spyOn(source, 'focus');
+
+    await coordinator.open(request);
+    trigger.remove();
+    await coordinator.close();
+
+    expect(triggerFocus).not.toHaveBeenCalled();
+    expect(sourceFocus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(view.focusListFallback).not.toHaveBeenCalled();
+  });
+
   it('remeasures the current source bounds before closing and uses them for the reverse renderer', async () => {
     const { coordinator, dependencies, request, view } = harness();
 
@@ -352,6 +385,79 @@ describe('TransitionCoordinator', () => {
     expect(view.setBusy).toHaveBeenLastCalledWith(false);
     expect(view.restoreScroll).toHaveBeenCalledTimes(1);
     expect(getActiveTransition(coordinator)).toBeNull();
+  });
+
+  it('recovers to stable idle cleanup when busy setup throws during open', async () => {
+    const busyFailure = new Error('busy failed');
+    const { coordinator, request, view } = harness();
+    vi.mocked(view.setBusy).mockImplementationOnce(() => {
+      throw busyFailure;
+    });
+
+    await expect(coordinator.open(request)).rejects.toBe(busyFailure);
+
+    expect(coordinator.state).toBe('idle');
+    expect(view.freezeScroll).not.toHaveBeenCalled();
+    expect(view.setDetailVisible).toHaveBeenLastCalledWith(false);
+    expect(view.setDetailInert).toHaveBeenLastCalledWith(true);
+    expect(view.setListVisible).toHaveBeenLastCalledWith(true);
+    expect(view.restoreScroll).toHaveBeenCalledTimes(1);
+    expect(getActiveTransition(coordinator)).toBeNull();
+  });
+
+  it('recovers to stable idle cleanup when detail preparation throws during open and allows retry', async () => {
+    const prepareFailure = new Error('prepare failed');
+    const { coordinator, request, view } = harness();
+    vi.mocked(view.prepareDetail).mockImplementationOnce(() => {
+      throw prepareFailure;
+    });
+
+    await expect(coordinator.open(request)).rejects.toBe(prepareFailure);
+
+    expect(coordinator.state).toBe('idle');
+    expect(view.setBusy).toHaveBeenNthCalledWith(1, true);
+    expect(view.setBusy).toHaveBeenLastCalledWith(false);
+    expect(view.setDetailVisible).toHaveBeenLastCalledWith(false);
+    expect(view.setDetailInert).toHaveBeenLastCalledWith(true);
+    expect(view.setListVisible).toHaveBeenLastCalledWith(true);
+    expect(view.restoreScroll).toHaveBeenCalledTimes(1);
+    expect(getActiveTransition(coordinator)).toBeNull();
+
+    await expect(coordinator.open(request)).resolves.toBeUndefined();
+    expect(coordinator.state).toBe('open');
+  });
+
+  it('recovers to stable open cleanup when list visibility throws during close and allows retry', async () => {
+    const visibilityFailure = new Error('list visibility failed');
+    const { coordinator, request, view } = harness();
+
+    await coordinator.open(request);
+    vi.mocked(view.focusDetailHeading).mockClear();
+    vi.mocked(view.setListVisible).mockImplementationOnce(() => {
+      throw visibilityFailure;
+    });
+
+    await expect(coordinator.close()).rejects.toBe(visibilityFailure);
+
+    expect(coordinator.state).toBe('open');
+    expect(view.setBusy).toHaveBeenLastCalledWith(false);
+    expect(view.setDetailClip).toHaveBeenLastCalledWith(FULL_CLIP);
+    expect(view.setListVisible).toHaveBeenLastCalledWith(false);
+    expect(view.setDetailVisible).toHaveBeenLastCalledWith(true);
+    expect(view.setDetailInert).toHaveBeenLastCalledWith(false);
+    expect(view.focusDetailHeading).toHaveBeenCalledTimes(1);
+    expect(getActiveTransition(coordinator)).toEqual(
+      expect.objectContaining({
+        controller: null,
+        renderer: null,
+        requestedEndpoint: 'idle',
+        interruption: null,
+      }),
+    );
+
+    vi.mocked(view.setListVisible).mockImplementation(() => undefined);
+    await expect(coordinator.close()).resolves.toBeUndefined();
+    expect(coordinator.state).toBe('idle');
   });
 
   it('Escape at low opening progress falls back closed and settles idle', async () => {
