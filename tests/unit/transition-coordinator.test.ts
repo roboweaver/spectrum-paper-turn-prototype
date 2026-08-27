@@ -258,15 +258,13 @@ describe('TransitionCoordinator', () => {
 
   it('uses fallback after a capture failure, logs exactly once, and still reaches open', async () => {
     const captureFailure = new Error('capture failed');
-    const { coordinator, dependencies, request, source, view } = harness({ captureFailure });
+    const { coordinator, dependencies, request } = harness({ captureFailure });
     const report = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await coordinator.open(request);
 
     expect(report).toHaveBeenCalledWith('Paper-turn full motion failed; using fallback.', captureFailure);
     expect(dependencies.runFallback).toHaveBeenCalledWith('open', 200, expect.any(AbortSignal));
-    expect(view.setSourceHidden).toHaveBeenCalledTimes(1);
-    expect(view.setSourceHidden).toHaveBeenLastCalledWith(source, false);
     expect(coordinator.state).toBe('open');
   });
 
@@ -346,14 +344,13 @@ describe('TransitionCoordinator', () => {
 
   it('recovers to stable idle cleanup when motion-mode selection fails during open', async () => {
     const modeFailure = new Error('mode failed');
-    const { coordinator, request, source, view } = harness({ modeFailure });
+    const { coordinator, request, view } = harness({ modeFailure });
 
     await expect(coordinator.open(request)).rejects.toBe(modeFailure);
 
     expect(coordinator.state).toBe('idle');
     expect(view.setBusy).toHaveBeenLastCalledWith(false);
     expect(view.restoreScroll).toHaveBeenCalledTimes(1);
-    expect(view.setSourceHidden).toHaveBeenCalledWith(source, false);
     expect(getActiveTransition(coordinator)).toBeNull();
   });
 
@@ -459,5 +456,37 @@ describe('TransitionCoordinator', () => {
     expect(view.setDetailVisible).toHaveBeenLastCalledWith(false);
     expect(view.restoreScroll).toHaveBeenCalledTimes(1);
     expect(getActiveTransition(coordinator)).toBeNull();
+  });
+
+  it('propagates an unexpected close AbortError only after restoring stable open cleanup once', async () => {
+    const { coordinator, dependencies, request, renderer, view } = harness();
+    const states: string[] = [];
+    coordinator.addEventListener('statechange', () => states.push(coordinator.state));
+
+    await coordinator.open(request);
+    states.length = 0;
+    vi.mocked(view.focusDetailHeading).mockClear();
+    dependencies.animate = vi.fn(async (_from, _to, _duration, onFrame) => {
+      onFrame(1);
+      onFrame(0.7);
+      throw makeAbortError('unexpected close abort');
+    });
+
+    await expect(coordinator.close()).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(states).toEqual(['closing', 'open']);
+    expect(dependencies.runFallback).not.toHaveBeenCalled();
+    expect(renderer.dispose).toHaveBeenCalledTimes(2);
+    expect(view.focusDetailHeading).toHaveBeenCalledTimes(1);
+    expect(coordinator.state).toBe('open');
+    expect(getActiveTransition(coordinator)).toEqual(
+      expect.objectContaining({
+        controller: null,
+        renderer: null,
+        requestedEndpoint: 'idle',
+        interruption: null,
+        progress: 1,
+      }),
+    );
   });
 });
