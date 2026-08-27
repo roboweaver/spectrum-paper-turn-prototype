@@ -69,7 +69,12 @@ test.describe('paper-turn visual checkpoints', () => {
   test.use({ viewport: { width: 1280, height: 900 } });
 
   test('captures deterministic paper-turn checkpoints', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'chromium-desktop', 'chromium-desktop only');
+    const isSupportedVisualBaseline =
+      testInfo.project.name === 'chromium-desktop' && process.platform === 'darwin';
+    test.skip(
+      !isSupportedVisualBaseline,
+      `Visual baselines are committed only for project "chromium-desktop" on Darwin (current: ${testInfo.project.name} on ${process.platform}).`,
+    );
 
     await page.clock.install();
     await page.goto(`/?duration=${TRANSITION_DURATION_MS}`);
