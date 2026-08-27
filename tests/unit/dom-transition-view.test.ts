@@ -231,7 +231,7 @@ describe('DomTransitionView', () => {
     expect(scrollTo).toHaveBeenCalledWith(0, 275);
   });
 
-  it('focuses the detail heading and list fallback elements', () => {
+  it('focuses the detail heading and list fallback elements without scrolling', () => {
     const focusHeading = vi.spyOn(fixture.heading, 'focus');
     const focusFallback = vi.spyOn(fixture.fallback, 'focus');
     const view = new DomTransitionView({
@@ -244,8 +244,10 @@ describe('DomTransitionView', () => {
 
     view.focusDetailHeading();
     expect(focusHeading).toHaveBeenCalledTimes(1);
+    expect(focusHeading).toHaveBeenCalledWith({ preventScroll: true });
 
     view.focusListFallback();
     expect(focusFallback).toHaveBeenCalledTimes(1);
+    expect(focusFallback).toHaveBeenCalledWith({ preventScroll: true });
   });
 });
