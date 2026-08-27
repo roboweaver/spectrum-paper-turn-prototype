@@ -33,6 +33,7 @@ vi.mock('three', () => {
 
   class MockCanvasTexture {
     image: HTMLCanvasElement;
+    colorSpace?: unknown;
     dispose = vi.fn();
 
     constructor(image: HTMLCanvasElement) {
@@ -146,6 +147,7 @@ vi.mock('three', () => {
     cameras: [] as MockOrthographicCamera[],
     renderers: [] as MockWebGLRenderer[],
     textures: [] as MockCanvasTexture[],
+    failAt: null as 'mesh-basic-material' | null,
     reset() {
       this.geometries.length = 0;
       this.materials.length = 0;
@@ -154,6 +156,7 @@ vi.mock('three', () => {
       this.cameras.length = 0;
       this.renderers.length = 0;
       this.textures.length = 0;
+      this.failAt = null;
     },
   };
 
@@ -180,6 +183,10 @@ vi.mock('three', () => {
     },
     MeshBasicMaterial: class extends MockMeshBasicMaterial {
       constructor(options: ConstructorParameters<typeof MockMeshBasicMaterial>[0]) {
+        if (mockState.failAt === 'mesh-basic-material') {
+          mockState.failAt = null;
+          throw new Error('Mock mesh basic material failure');
+        }
         super(options);
         mockState.materials.push(this);
       }
@@ -202,6 +209,7 @@ vi.mock('three', () => {
         mockState.materials.push(this);
       }
     },
+    SRGBColorSpace: 'SRGBColorSpace',
     WebGLRenderer: class extends MockWebGLRenderer {
       constructor() {
         super();
@@ -234,7 +242,8 @@ const threeMock = (
         dispose: ReturnType<typeof vi.fn>;
         forceContextLoss: ReturnType<typeof vi.fn>;
       }>;
-      textures: Array<{ dispose: ReturnType<typeof vi.fn> }>;
+      textures: Array<{ colorSpace?: unknown; dispose: ReturnType<typeof vi.fn> }>;
+      failAt: 'mesh-basic-material' | null;
       reset(): void;
     };
   }
@@ -248,6 +257,15 @@ function createInput(): RendererInput {
     texture: document.createElement('canvas'),
     profile: defaultMotionProfile,
   };
+}
+
+function createDocumentWithDevicePixelRatio(devicePixelRatio?: number): Document {
+  const documentRef = document.implementation.createHTMLDocument('paper-turn');
+  Object.defineProperty(documentRef, 'defaultView', {
+    configurable: true,
+    value: devicePixelRatio === undefined ? undefined : { devicePixelRatio },
+  });
+  return documentRef;
 }
 
 const originalDevicePixelRatio = window.devicePixelRatio;
@@ -312,7 +330,7 @@ describe('paper shaders', () => {
     expect(paperTurnFragmentShader).toContain('uniform sampler2D paperTexture;');
     expect(paperTurnFragmentShader).toContain('uniform float shadowStrength;');
     expect(normalizedShader).toContain(
-      'vec3 reverse = mix(vec3(0.86, 0.87, 0.89), front.rgb, 0.2); float highlight = 0.78 + vShade * 0.32; vec3 face = gl_FrontFacing ? front.rgb : reverse; float reverseShadow = gl_FrontFacing ? 0.0 : shadowStrength * 0.35; gl_FragColor = vec4(face * highlight * (1.0 - reverseShadow), front.a);',
+      'vec3 reverse = mix(vec3(0.86, 0.87, 0.89), front.rgb, 0.2); float highlight = 0.78 + vShade * 0.32; vec3 face = gl_FrontFacing ? front.rgb : reverse; float reverseShadow = gl_FrontFacing ? 0.0 : shadowStrength * 0.35; gl_FragColor = vec4(face * highlight * (1.0 - reverseShadow), front.a); #include <colorspace_fragment>',
     );
     expect(normalizedShader).not.toContain('reverseBase');
     expect(normalizedShader).not.toContain('reverse = reverseBase * highlight;');
@@ -379,9 +397,10 @@ describe('PaperTurnRenderer', () => {
     expect(threeMock.scenes[0]?.objects[0]).toBe(threeMock.meshes[1]);
     expect(threeMock.scenes[0]?.objects[1]).toBe(threeMock.meshes[0]);
     expect(threeMock.meshes[1]?.position.set).toHaveBeenCalledWith(10, 14, -12);
+    expect(threeMock.textures[0]?.colorSpace).toBe('SRGBColorSpace');
     expect(threeMock.materials[0]).toMatchObject({
       uniforms: {
-        paperTexture: { value: input.texture },
+        paperTexture: { value: threeMock.textures[0] },
         shadowStrength: { value: input.profile.shadowStrength },
       },
       vertexShader: paperTurnVertexShader,
@@ -396,6 +415,71 @@ describe('PaperTurnRenderer', () => {
       side: 'DoubleSide',
       depthWrite: false,
     });
+  });
+
+  it('uses the provided document window device pixel ratio instead of the global window', () => {
+    const input = createInput();
+    const documentRef = createDocumentWithDevicePixelRatio(1.5);
+
+    new PaperTurnRenderer(input, documentRef);
+
+    expect(threeMock.renderers[0]?.setPixelRatio).toHaveBeenCalledWith(1.5);
+    expect(documentRef.body.querySelector('.paper-turn-overlay')).not.toBeNull();
+    expect(document.body.querySelector('.paper-turn-overlay')).toBeNull();
+  });
+
+  it('falls back to a device pixel ratio of 1 when the provided document window value is invalid', () => {
+    const input = createInput();
+    const documentRef = createDocumentWithDevicePixelRatio(Number.POSITIVE_INFINITY);
+
+    new PaperTurnRenderer(input, documentRef);
+
+    expect(threeMock.renderers[0]?.setPixelRatio).toHaveBeenCalledWith(1);
+  });
+
+  it.each([
+    ['destinationRect.left', { left: Number.NaN }],
+    ['destinationRect.top', { top: Number.POSITIVE_INFINITY }],
+  ] as const)('rejects invalid %s values before camera setup', (_field, destinationRect) => {
+    const input = {
+      ...createInput(),
+      destinationRect: {
+        ...createInput().destinationRect,
+        ...destinationRect,
+      },
+    };
+
+    expect(() => new PaperTurnRenderer(input)).toThrow(/Invalid destinationRect\.(left|top)/);
+    expect(document.body.children).toHaveLength(0);
+    expect(threeMock.renderers).toHaveLength(0);
+  });
+
+  it.each([-0.01, 1.01])('rejects out-of-range shadowStrength values: %s', (shadowStrength) => {
+    const input = {
+      ...createInput(),
+      profile: {
+        ...defaultMotionProfile,
+        shadowStrength,
+      },
+    };
+
+    expect(() => new PaperTurnRenderer(input)).toThrow(/Invalid profile\.shadowStrength/);
+    expect(threeMock.renderers).toHaveLength(0);
+  });
+
+  it('cleans up attached DOM and partial resources when construction fails after renderer attachment', () => {
+    const input = createInput();
+    threeMock.failAt = 'mesh-basic-material';
+
+    expect(() => new PaperTurnRenderer(input)).toThrow('Mock mesh basic material failure');
+
+    expect(document.body.querySelector('.paper-turn-overlay')).toBeNull();
+    expect(document.body.querySelectorAll('canvas')).toHaveLength(0);
+    expect(threeMock.geometries[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(threeMock.materials[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(threeMock.textures[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(threeMock.renderers[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(threeMock.renderers[0]?.forceContextLoss).toHaveBeenCalledTimes(1);
   });
 
   it('throws when rendering after disposal and releases DOM and rendering resources idempotently', () => {
