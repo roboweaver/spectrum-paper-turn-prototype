@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { defaultMotionProfile } from '../../src/transition/motion-profile';
 
+function assertDefaultMotionProfileIsReadonly(): void {
+  // @ts-expect-error default profile is readonly
+  defaultMotionProfile.durationMs = 700;
+}
+
+void assertDefaultMotionProfileIsReadonly;
+
 describe('defaultMotionProfile', () => {
   it('stays inside approved timing, mesh, and texture limits', () => {
     expect(defaultMotionProfile.durationMs).toBe(720);
