@@ -14,7 +14,7 @@ import {
 
 import { buildPaperFrame } from './geometry';
 import { paperTurnFragmentShader, paperTurnVertexShader } from './paper-shaders';
-import type { PaperFrame, PaperRenderer, RendererInput } from './types';
+import type { PaperFrame, PaperRenderer, Rect, RendererInput } from './types';
 
 function validateFiniteNumber(value: number, field: string): void {
   if (!Number.isFinite(value)) {
@@ -36,6 +36,13 @@ function validatePositiveInteger(value: number, field: string): void {
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(`Invalid ${field}: expected an integer greater than or equal to 1.`);
   }
+}
+
+function validateRect(rect: Rect, field: string): void {
+  validateFiniteNumber(rect.left, `${field}.left`);
+  validateFiniteNumber(rect.top, `${field}.top`);
+  validatePositiveNumber(rect.width, `${field}.width`);
+  validatePositiveNumber(rect.height, `${field}.height`);
 }
 
 function validateUnitInterval(value: number, field: string): void {
@@ -149,10 +156,8 @@ export class PaperTurnRenderer implements PaperRenderer {
     validatePositiveInteger(input.profile.meshRows, 'profile.meshRows');
     validatePositiveNumber(input.profile.maxTextureDpr, 'profile.maxTextureDpr');
     validateUnitInterval(input.profile.shadowStrength, 'profile.shadowStrength');
-    validateFiniteNumber(input.destinationRect.left, 'destinationRect.left');
-    validateFiniteNumber(input.destinationRect.top, 'destinationRect.top');
-    validatePositiveNumber(input.destinationRect.width, 'destinationRect.width');
-    validatePositiveNumber(input.destinationRect.height, 'destinationRect.height');
+    validateRect(input.sourceRect, 'sourceRect');
+    validateRect(input.destinationRect, 'destinationRect');
 
     this.input = input;
 
