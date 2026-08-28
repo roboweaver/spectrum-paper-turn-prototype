@@ -21,6 +21,12 @@ interface ActiveTransition {
   interruption: Interruption;
 }
 
+interface ActiveFallbackTiming {
+  direction: 'open' | 'close';
+  startedAt: number;
+  durationMs: number;
+}
+
 const FULL_CLIP = 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)';
 const OPEN_SETUP_RECOVERY_ERROR =
   'Paper-turn open setup cleanup failed while preserving the original error.';
@@ -64,6 +70,7 @@ function normalizeProgress(progress: number): number {
 export class TransitionCoordinator extends EventTarget {
   public state: TransitionState = 'idle';
   private active: ActiveTransition | null = null;
+  private activeFallbackTiming: ActiveFallbackTiming | null = null;
 
   public constructor(
     private readonly view: TransitionView,
@@ -140,6 +147,7 @@ export class TransitionCoordinator extends EventTarget {
     }
 
     this.active.interruption = 'escape';
+    this.active.progress = this.resolveCancellationProgress();
     this.active.requestedEndpoint = this.active.progress >= 0.5 ? 'open' : 'idle';
     this.active.controller?.abort();
   }
@@ -242,6 +250,7 @@ export class TransitionCoordinator extends EventTarget {
 
   private async runFallbackTo(endpoint: Endpoint): Promise<void> {
     const active = this.requireActive();
+    const direction = endpoint === 'open' ? 'open' : 'close';
 
     this.disposeRenderer();
     if (active.source) {
@@ -250,6 +259,11 @@ export class TransitionCoordinator extends EventTarget {
 
     const controller = new AbortController();
     active.controller = controller;
+    this.activeFallbackTiming = {
+      direction,
+      startedAt: this.readNow(),
+      durationMs: this.normalizeFallbackDuration(this.dependencies.profile.fallbackDurationMs),
+    };
 
     if (endpoint === 'open') {
       this.view.setDetailClip(FULL_CLIP);
@@ -257,7 +271,7 @@ export class TransitionCoordinator extends EventTarget {
 
     try {
       await this.dependencies.runFallback(
-        endpoint === 'open' ? 'open' : 'close',
+        direction,
         this.dependencies.profile.fallbackDurationMs,
         controller.signal,
       );
@@ -266,6 +280,7 @@ export class TransitionCoordinator extends EventTarget {
         console.error('Paper-turn fallback failed; settling to a stable endpoint.', error);
       }
     } finally {
+      this.activeFallbackTiming = null;
       if (this.active) {
         this.active.controller = null;
       }
@@ -289,6 +304,7 @@ export class TransitionCoordinator extends EventTarget {
     active.controller = null;
     active.interruption = null;
     active.progress = 1;
+    this.activeFallbackTiming = null;
     this.view.setBusy(false);
     this.view.setDetailClip(FULL_CLIP);
     this.view.setListVisible(false);
@@ -313,6 +329,7 @@ export class TransitionCoordinator extends EventTarget {
       this.active.interruption = null;
       this.active.progress = 0;
     }
+    this.activeFallbackTiming = null;
 
     this.view.setBusy(false);
     this.view.setDetailInert(true);
@@ -354,6 +371,7 @@ export class TransitionCoordinator extends EventTarget {
       this.active.interruption = null;
       this.active.progress = 0;
     }
+    this.activeFallbackTiming = null;
 
     this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.setBusy(false));
     this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailInert(true));
@@ -379,6 +397,7 @@ export class TransitionCoordinator extends EventTarget {
       this.active.interruption = null;
       this.active.progress = 1;
     }
+    this.activeFallbackTiming = null;
 
     this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setBusy(false));
     this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailClip(FULL_CLIP));
@@ -412,6 +431,40 @@ export class TransitionCoordinator extends EventTarget {
     } catch {
       return previousSource;
     }
+  }
+
+  private resolveCancellationProgress(): number {
+    const fallbackProgress = this.measureFallbackProgress();
+    if (fallbackProgress !== null) {
+      return fallbackProgress;
+    }
+
+    const progress = this.active?.progress;
+    if (typeof progress !== 'number' || !Number.isFinite(progress)) {
+      return 0;
+    }
+
+    return normalizeProgress(progress);
+  }
+
+  private measureFallbackProgress(): number | null {
+    const timing = this.activeFallbackTiming;
+    if (!timing || timing.durationMs <= 0) {
+      return null;
+    }
+
+    const startedAt = Number.isFinite(timing.startedAt) ? timing.startedAt : 0;
+    const elapsedRatio = Math.max(0, Math.min(1, (this.readNow() - startedAt) / timing.durationMs));
+    return timing.direction === 'open' ? elapsedRatio : 1 - elapsedRatio;
+  }
+
+  private normalizeFallbackDuration(durationMs: number): number {
+    return Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 0;
+  }
+
+  private readNow(): number {
+    const now = performance.now();
+    return Number.isFinite(now) ? now : 0;
   }
 
   private requireActive(): ActiveTransition {
