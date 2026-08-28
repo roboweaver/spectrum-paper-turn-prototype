@@ -473,3 +473,26 @@ test('chromium mobile keeps mesh density and canvas DPR within bounds', async ({
   expect(metrics.canvasWidth).toBeLessThanOrEqual(metrics.viewportWidth * 2);
   expect(metrics.canvasHeight).toBeLessThanOrEqual(metrics.viewportHeight * 2);
 });
+
+test('the close button label stays on one line when its width is squeezed', async ({ page }) => {
+  // html-to-image inlines the live button's height onto its clone, so a label
+  // that wraps in the capture spills out of a pill that can no longer grow.
+  // The label must therefore never wrap, whatever font the browser resolves.
+  await page.goto('/?duration=120');
+  await cardTrigger(page, 0).click();
+  await expect(page.locator('[data-detail-surface]')).toBeVisible();
+
+  const measured = await closeButton(page).evaluate((button) => {
+    const label = (button as HTMLElement & { shadowRoot: ShadowRoot }).shadowRoot.querySelector('#label');
+    const naturalHeight = label!.getBoundingClientRect().height;
+
+    (button as HTMLElement).style.width = '84px';
+    const squeezedHeight = label!.getBoundingClientRect().height;
+    (button as HTMLElement).style.width = '';
+
+    return { naturalHeight, squeezedHeight, whiteSpace: getComputedStyle(label!).whiteSpace };
+  });
+
+  expect(measured.whiteSpace).toBe('nowrap');
+  expect(measured.squeezedHeight).toBeCloseTo(measured.naturalHeight, 1);
+});

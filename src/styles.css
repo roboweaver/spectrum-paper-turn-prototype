@@ -104,6 +104,19 @@ sp-card { width: 100%; min-height: 330px; }
 .detail-surface[hidden] { display: none; }
 
 .detail-toolbar { display: flex; justify-content: flex-end; }
+
+/* Spectrum's internal button label is `white-space: normal` and sits in a pill
+   whose height does not grow, so a label that needs marginally more width than
+   its content box wraps to two lines and spills out of the pill. That happens
+   whenever the resolved font is wider than the one the layout was measured
+   with — Adobe Clean installed locally versus a fallback, for instance.
+   `white-space` is inherited, so setting it on the host reaches the label
+   inside the shadow root; `flex: none` keeps the host from being shrunk below
+   its content by the toolbar. */
+.detail-toolbar sp-button {
+  flex: none;
+  white-space: nowrap;
+}
 .detail-content {
   max-width: 900px;
   margin-top: clamp(40px, 8vh, 96px);
