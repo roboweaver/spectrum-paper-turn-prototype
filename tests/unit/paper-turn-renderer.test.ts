@@ -499,18 +499,17 @@ describe('PaperTurnRenderer', () => {
     renderer.dispose();
   });
 
-  it('fades the sheet out as it settles onto the revealed page', () => {
+  it('keeps the sheet opaque so the page is never drawn twice', () => {
     const input = createInput();
     const renderer = new PaperTurnRenderer(input);
     const paperMaterial = threeMock.materials[0] as unknown as {
       uniforms: { sheetAlpha: { value: number } };
     };
 
-    expect(renderer.render(0).alpha).toBe(1);
-    expect(paperMaterial.uniforms.sheetAlpha.value).toBe(1);
-
-    expect(renderer.render(1).alpha).toBe(0);
-    expect(paperMaterial.uniforms.sheetAlpha.value).toBe(0);
+    for (const progress of [0, 0.5, 0.78, 1]) {
+      expect(renderer.render(progress).alpha).toBe(1);
+      expect(paperMaterial.uniforms.sheetAlpha.value).toBe(1);
+    }
 
     renderer.dispose();
   });

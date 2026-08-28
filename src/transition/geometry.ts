@@ -14,9 +14,7 @@ const PERSPECTIVE_STRENGTH = 0.00042;
 /** Darkest shading applied when the sheet is edge-on to the viewer. */
 const FACING_FLOOR = 0.32;
 /** Eased progress at which the destination page is fully uncovered. */
-const REVEAL_COMPLETE_AT = 0.8;
-/** Eased progress at which the settled sheet starts dissolving into the page. */
-const SHEET_FADE_START = 0.5;
+const REVEAL_COMPLETE_AT = 0.92;
 /**
  * Fraction of half-width each half keeps at peak curl. A rigid plate would
  * project to a zero-width line when edge-on; a real sheet stays curved, so the
@@ -25,14 +23,6 @@ const SHEET_FADE_START = 0.5;
 const ARC_BULGE = 0.34;
 function revealProgress(eased: number): number {
   return Math.min(1, Math.max(0, eased / REVEAL_COMPLETE_AT));
-}
-
-function sheetAlpha(eased: number): number {
-  if (eased <= SHEET_FADE_START) {
-    return 1;
-  }
-
-  return Math.min(1, Math.max(0, (1 - eased) / (1 - SHEET_FADE_START)));
 }
 
 export function oppositeCorner(corner: Corner): Corner {
@@ -341,7 +331,7 @@ export function buildPaperFrame(  source: Rect,
     positions,
     shade,
     lift,
-    alpha: sheetAlpha(eased),
+    alpha: 1,
     revealClipPath: clipPathBetween(baseRect, destination, grabbed, revealProgress(eased)),
   };
 }

@@ -152,10 +152,16 @@ describe('paper geometry', () => {
     }
   });
 
-  it('holds the sheet opaque until it dissolves into the settled page', () => {
-    expect(buildPaperFrame(source, destination, 'top-right', 0, profile).alpha).toBe(1);
-    expect(buildPaperFrame(source, destination, 'top-right', 0.5, profile).alpha).toBe(1);
-    expect(buildPaperFrame(source, destination, 'top-right', 1, profile).alpha).toBe(0);
+  it('keeps the sheet fully opaque for the whole turn', () => {
+    // The reverse face is a capture of the destination page, and the live
+    // destination DOM sits directly beneath the sheet. Any transparency
+    // therefore shows the same content twice, offset by the sheet's
+    // deformation, which reads as ghosted double text. The sheet instead stays
+    // opaque and hands off at progress 1, where its geometry already matches
+    // the destination rect exactly.
+    for (const progress of [0, 0.25, 0.5, 0.6, 0.78, 0.9, 1]) {
+      expect(buildPaperFrame(source, destination, 'top-right', progress, profile).alpha).toBe(1);
+    }
   });
 
   it('reports zero lift at both endpoints and full lift at peak curl', () => {
