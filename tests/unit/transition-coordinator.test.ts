@@ -28,6 +28,12 @@ interface ActiveSnapshot {
   interruption: 'escape' | 'resize' | null;
 }
 
+interface ActiveFallbackTimingSnapshot {
+  direction: 'open' | 'close';
+  startedAt: number;
+  durationMs: number;
+}
+
 interface HarnessOptions {
   mode?: 'full' | 'fallback';
   sourceExists?: boolean;
@@ -69,6 +75,11 @@ function createAbortableFallbackRunner() {
 
 function getActiveTransition(coordinator: TransitionCoordinator): ActiveSnapshot | null {
   return (coordinator as unknown as { active: ActiveSnapshot | null }).active;
+}
+
+function getActiveFallbackTiming(coordinator: TransitionCoordinator): ActiveFallbackTimingSnapshot | null {
+  return (coordinator as unknown as { activeFallbackTiming: ActiveFallbackTimingSnapshot | null })
+    .activeFallbackTiming;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -987,6 +998,76 @@ describe('TransitionCoordinator', () => {
     expect(coordinator.state).toBe('idle');
     expect(getActiveTransition(coordinator)).toBeNull();
   });
+
+  it.each([
+    ['zero', 0],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['negative', -200],
+  ])(
+    'fallback open with %s duration settles open immediately without invoking the runner',
+    async (_label, fallbackDurationMs) => {
+      const { coordinator, dependencies, request, source, view } = harness({ mode: 'fallback' });
+      dependencies.profile = { ...dependencies.profile, fallbackDurationMs };
+
+      await coordinator.open(request);
+
+      expect(dependencies.runFallback).not.toHaveBeenCalled();
+      expect(coordinator.state).toBe('open');
+      expect(getActiveFallbackTiming(coordinator)).toBeNull();
+      expect(getActiveTransition(coordinator)).toEqual(
+        expect.objectContaining({
+          source,
+          controller: null,
+          renderer: null,
+          progress: 1,
+          requestedEndpoint: 'open',
+          interruption: null,
+        }),
+      );
+      expect(view.setBusy).toHaveBeenLastCalledWith(false);
+      expect(view.setDetailClip).toHaveBeenLastCalledWith(FULL_CLIP);
+      expect(view.setListVisible).toHaveBeenLastCalledWith(false);
+      expect(view.setDetailVisible).toHaveBeenLastCalledWith(true);
+      expect(view.setDetailInert).toHaveBeenLastCalledWith(false);
+    },
+  );
+
+  it.each([
+    ['zero', 0],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['negative', -200],
+  ])(
+    'fallback close with %s duration settles idle immediately without invoking the runner',
+    async (_label, fallbackDurationMs) => {
+      const { coordinator, dependencies, request, source, view } = harness({ mode: 'fallback' });
+      dependencies.profile = { ...dependencies.profile, fallbackDurationMs };
+
+      await coordinator.open(request);
+      vi.mocked(view.setSourceHidden).mockClear();
+      vi.mocked(view.setBusy).mockClear();
+      vi.mocked(view.setDetailClip).mockClear();
+      vi.mocked(view.setListVisible).mockClear();
+      vi.mocked(view.setDetailVisible).mockClear();
+      vi.mocked(view.setDetailInert).mockClear();
+      vi.mocked(view.restoreScroll).mockClear();
+
+      await coordinator.close();
+
+      expect(dependencies.runFallback).not.toHaveBeenCalled();
+      expect(coordinator.state).toBe('idle');
+      expect(getActiveFallbackTiming(coordinator)).toBeNull();
+      expect(getActiveTransition(coordinator)).toBeNull();
+      expect(view.setSourceHidden).toHaveBeenNthCalledWith(1, source, false);
+      expect(view.setBusy).toHaveBeenLastCalledWith(false);
+      expect(view.setDetailClip).toHaveBeenLastCalledWith(CLOSED_CLIP_BY_CORNER[request.grabbedCorner]);
+      expect(view.setDetailVisible).toHaveBeenLastCalledWith(false);
+      expect(view.setListVisible).toHaveBeenLastCalledWith(true);
+      expect(view.setDetailInert).toHaveBeenLastCalledWith(true);
+      expect(view.restoreScroll).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('viewport resize preserves the requested endpoint and avoids geometry recompute during fallback', async () => {
     const { coordinator, dependencies, request, view } = harness();

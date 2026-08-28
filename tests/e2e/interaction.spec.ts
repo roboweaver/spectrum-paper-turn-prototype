@@ -90,10 +90,38 @@ async function fallbackAnimationSnapshot(page: Page) {
     return {
       animationCount: element.getAnimations().length,
       currentTime: typeof animation?.currentTime === 'number' ? animation.currentTime : Number.NaN,
+      progress:
+        typeof animation?.currentTime === 'number' ? Number(animation.currentTime) / 10_000 : Number.NaN,
       playState: animation?.playState ?? 'idle',
       opacity: Number(getComputedStyle(element).opacity),
     };
   });
+}
+
+async function waitForFallbackPastMidpoint(page: Page, direction: 'open' | 'close') {
+  await page.waitForFunction(
+    (expectedDirection) => {
+      const detail = document.querySelector<HTMLElement>('[data-detail-surface]');
+      const animation = detail?.getAnimations()[0];
+      const opacity = detail ? Number(getComputedStyle(detail).opacity) : Number.NaN;
+      const progress =
+        animation && typeof animation.currentTime === 'number'
+          ? Number(animation.currentTime) / 10_000
+          : Number.NaN;
+
+      if (!animation || animation.playState !== 'running' || !Number.isFinite(progress)) {
+        return false;
+      }
+
+      if (progress <= 0.55 || progress >= 0.95) {
+        return false;
+      }
+
+      return expectedDirection === 'open' ? opacity > 0.7 && opacity < 1 : opacity > 0 && opacity < 0.4;
+    },
+    direction,
+    { timeout: 8_000 },
+  );
 }
 
 test('mouse opening and reverse closing settle on normal Spectrum DOM', async ({ page }) => {
@@ -250,66 +278,56 @@ test('reduced motion and explicit fallback reset the hidden detail clip before r
 });
 
 test('Escape late in explicit fallback open settles open and late close settles idle', async ({ page }) => {
-  await page.goto('/?fallback=1&duration=2000');
-  await setFallbackDurationMs(page, 2000);
+  await page.goto('/?fallback=1&duration=10000');
+  await setFallbackDurationMs(page, 10_000);
 
   await cardTrigger(page, 0).click();
   await expect(detailSurface(page)).toBeVisible();
-  await page.waitForFunction(() => {
-    const detail = document.querySelector<HTMLElement>('[data-detail-surface]');
-    const animation = detail?.getAnimations()[0];
-    const opacity = detail ? Number(getComputedStyle(detail).opacity) : Number.NaN;
-    return Boolean(
-      animation &&
-        animation.playState === 'running' &&
-        typeof animation.currentTime === 'number' &&
-        animation.currentTime > 1200 &&
-        opacity > 0.7 &&
-        opacity < 1,
-    );
-  });
+  await waitForFallbackPastMidpoint(page, 'open');
 
   const openingAnimation = await fallbackAnimationSnapshot(page);
   expect(openingAnimation.animationCount).toBeGreaterThan(0);
   expect(openingAnimation.playState).toBe('running');
-  expect(openingAnimation.currentTime).toBeGreaterThan(1200);
+  expect(openingAnimation.progress).toBeGreaterThan(0.55);
+  expect(openingAnimation.progress).toBeLessThan(0.95);
   expect(openingAnimation.opacity).toBeGreaterThan(0.7);
   expect(openingAnimation.opacity).toBeLessThan(1);
 
   await page.keyboard.press('Escape');
 
-  await expect(root(page)).toHaveAttribute('data-transition-state', 'open');
-  await expect(detailHeading(page)).toBeFocused();
-  await expect(overlay(page)).toHaveCount(0);
+  await Promise.all([
+    expect(root(page)).toHaveAttribute('data-transition-state', 'open', { timeout: 1_800 }),
+    expect(detailHeading(page)).toBeFocused({ timeout: 1_800 }),
+    expect(overlay(page)).toHaveCount(0, { timeout: 1_800 }),
+    expect.poll(() => detailInlineClip(page), { timeout: 1_800 }).toBe(FULL_CLIP),
+    expect
+      .poll(async () => (await fallbackAnimationSnapshot(page)).animationCount, { timeout: 1_800 })
+      .toBe(0),
+  ]);
 
   await closeButton(page).click();
-  await page.waitForFunction(() => {
-    const detail = document.querySelector<HTMLElement>('[data-detail-surface]');
-    const animation = detail?.getAnimations()[0];
-    const opacity = detail ? Number(getComputedStyle(detail).opacity) : Number.NaN;
-    return Boolean(
-      animation &&
-        animation.playState === 'running' &&
-        typeof animation.currentTime === 'number' &&
-        animation.currentTime > 1200 &&
-        opacity > 0 &&
-        opacity < 0.4,
-    );
-  });
+  await waitForFallbackPastMidpoint(page, 'close');
 
   const closingAnimation = await fallbackAnimationSnapshot(page);
   expect(closingAnimation.animationCount).toBeGreaterThan(0);
   expect(closingAnimation.playState).toBe('running');
-  expect(closingAnimation.currentTime).toBeGreaterThan(1200);
+  expect(closingAnimation.progress).toBeGreaterThan(0.55);
+  expect(closingAnimation.progress).toBeLessThan(0.95);
   expect(closingAnimation.opacity).toBeGreaterThan(0);
   expect(closingAnimation.opacity).toBeLessThan(0.4);
 
   await page.keyboard.press('Escape');
 
-  await expect(root(page)).toHaveAttribute('data-transition-state', 'idle');
-  await expect(cardTrigger(page, 0)).toBeFocused();
-  await expect(detailSurface(page)).toBeHidden();
-  await expect(overlay(page)).toHaveCount(0);
+  await Promise.all([
+    expect(root(page)).toHaveAttribute('data-transition-state', 'idle', { timeout: 1_800 }),
+    expect(cardTrigger(page, 0)).toBeFocused({ timeout: 1_800 }),
+    expect(detailSurface(page)).toBeHidden({ timeout: 1_800 }),
+    expect(overlay(page)).toHaveCount(0, { timeout: 1_800 }),
+    expect.poll(() => detailInlineClip(page), { timeout: 1_800 }).toBe(CLOSED_TOP_RIGHT_CLIP),
+    expect
+      .poll(async () => (await fallbackAnimationSnapshot(page)).animationCount, { timeout: 1_800 })
+      .toBe(0),
+  ]);
 });
 
 test('chromium mobile keeps mesh density and canvas DPR within bounds', async ({ page }, testInfo) => {
