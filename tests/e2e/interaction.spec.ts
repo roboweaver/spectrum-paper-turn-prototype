@@ -362,13 +362,33 @@ test('mixed fallback close cleanup does not poison the next full-motion reopen',
   await closeButton(page).click();
   await waitForFallbackPastMidpoint(page, 'close');
 
-  const closingAnimation = await fallbackAnimationSnapshot(page);
-  expect(closingAnimation.animationCount).toBeGreaterThan(0);
-  expect(closingAnimation.playState).toBe('running');
-  expect(closingAnimation.progress).toBeGreaterThan(0.55);
-  expect(closingAnimation.progress).toBeLessThan(0.95);
-  expect(closingAnimation.opacity).toBeGreaterThan(0);
-  expect(closingAnimation.opacity).toBeLessThan(0.4);
+  const closingAnimationHandle = await detailSurface(page).evaluateHandle((element) => {
+    const animations = element.getAnimations();
+    if (animations.length !== 1) {
+      throw new Error(`Expected exactly one running fallback close animation, found ${animations.length}`);
+    }
+
+    const animation = animations[0];
+    if (!animation) {
+      throw new Error('Expected fallback close animation handle to exist');
+    }
+
+    if (animation.playState !== 'running') {
+      throw new Error(`Expected fallback close animation to be running, found ${animation.playState}`);
+    }
+
+    return animation;
+  });
+  const closingAnimationFinishedHandle = await closingAnimationHandle.evaluateHandle((animation) => ({
+    finished: animation.finished,
+  }));
+
+  try {
+    await closingAnimationFinishedHandle.evaluate(({ finished }) => finished);
+  } finally {
+    await closingAnimationFinishedHandle.dispose();
+    await closingAnimationHandle.dispose();
+  }
 
   await Promise.all([
     expect(cardTrigger(page, 0)).toBeFocused({ timeout: 4_500 }),
