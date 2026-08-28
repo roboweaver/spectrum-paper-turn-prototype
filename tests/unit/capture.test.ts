@@ -141,3 +141,60 @@ describe('captureElement', () => {
     expect(toCanvas).not.toHaveBeenCalled();
   });
 });
+
+describe('theme token inlining', () => {
+  function createThemedElement(tokens: Record<string, string>): HTMLElement {
+    const element = document.createElement('div');
+    vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 400, bottom: 300,
+      width: 400, height: 300, toJSON: () => ({}),
+    });
+    Object.defineProperty(element, 'computedStyleMap', {
+      value: () => ({ keys: () => Object.keys(tokens)[Symbol.iterator]() }),
+      configurable: true,
+    });
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      getPropertyValue: (name: string) => tokens[name] ?? '',
+    } as unknown as CSSStyleDeclaration);
+    return element;
+  }
+
+  it('inlines the inherited Spectrum tokens so the detached clone keeps its theme', async () => {
+    const element = createThemedElement({
+      '--spectrum-gray-200': 'rgb(230, 230, 230)',
+      '--spectrum-sans-font-family-stack': 'adobe-clean, sans-serif',
+      '--unrelated-token': 'ignored',
+    });
+    let seenDuringCapture = '';
+    const toCanvas = vi.fn(async () => {
+      seenDuringCapture = element.getAttribute('style') ?? '';
+      return document.createElement('canvas');
+    });
+
+    await captureElement(element, defaultMotionProfile, undefined, toCanvas, 1);
+
+    expect(seenDuringCapture).toContain('--spectrum-gray-200: rgb(230, 230, 230)');
+    expect(seenDuringCapture).toContain('--spectrum-sans-font-family-stack: adobe-clean, sans-serif');
+    expect(seenDuringCapture).not.toContain('--unrelated-token');
+  });
+
+  it('restores the element to its original inline style once the capture resolves', async () => {
+    const element = createThemedElement({ '--spectrum-gray-200': 'rgb(230, 230, 230)' });
+    element.setAttribute('style', 'opacity: 0.5;');
+    const toCanvas = vi.fn(async () => document.createElement('canvas'));
+
+    await captureElement(element, defaultMotionProfile, undefined, toCanvas, 1);
+
+    expect(element.getAttribute('style')).toBe('opacity: 0.5;');
+  });
+
+  it('restores the element even when the capture rejects', async () => {
+    const element = createThemedElement({ '--spectrum-gray-200': 'rgb(230, 230, 230)' });
+    const toCanvas = vi.fn(async () => { throw new Error('capture failed'); });
+
+    await expect(captureElement(element, defaultMotionProfile, undefined, toCanvas, 1)).rejects.toThrow(
+      'capture failed',
+    );
+    expect(element.hasAttribute('style')).toBe(false);
+  });
+});

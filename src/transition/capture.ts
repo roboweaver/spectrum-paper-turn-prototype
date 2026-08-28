@@ -80,6 +80,52 @@ export function textureCaptureOptions(
   };
 }
 
+const THEME_TOKEN_PREFIX = '--spectrum';
+
+const themeTokenCssCache = new WeakMap<HTMLElement, string>();
+
+type MaybeStyleMapped = HTMLElement & {
+  computedStyleMap?: () => { keys: () => Iterable<string> };
+};
+
+/**
+ * Spectrum declares its ~3.4k design tokens on the `<sp-theme>` element rather
+ * than on `:root`, so descendants only resolve them by inheritance. html-to-image
+ * renders its clone detached inside an SVG `foreignObject`, which inherits
+ * nothing — every `var(--spectrum-*)` in the clone silently falls back, giving
+ * the texture the wrong padding, greys and text metrics. Inlining the resolved
+ * tokens on the capture root restores the whole cascade for the clone.
+ *
+ * Enumerating and serialising the tokens costs a few milliseconds, so the result
+ * is cached per element; a page captures at most a handful of distinct roots.
+ */
+function themeTokenCss(element: HTMLElement): string {
+  const cached = themeTokenCssCache.get(element);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const styleMap = (element as MaybeStyleMapped).computedStyleMap?.();
+  // Without `computedStyleMap` the tokens cannot be enumerated, so the capture
+  // proceeds untouched rather than failing outright.
+  const declarations: string[] = [];
+
+  if (styleMap) {
+    const computed = window.getComputedStyle(element);
+
+    for (const property of styleMap.keys()) {
+      if (property.startsWith(THEME_TOKEN_PREFIX)) {
+        declarations.push(`${property}: ${computed.getPropertyValue(property)}`);
+      }
+    }
+  }
+
+  const css = declarations.join('; ');
+  themeTokenCssCache.set(element, css);
+  return css;
+}
+
 export async function captureElement(
   element: HTMLElement,
   profile: MotionProfile,
@@ -94,11 +140,28 @@ export async function captureElement(
   }
 
   const options = textureCaptureOptions(width, height, devicePixelRatio, profile);
-  // html-to-image applies `style` to its detached clone only, so the live page
-  // never flickers while the destination is captured through its closed clip.
-  return toCanvas(element, {
-    ...options,
-    cacheBust: true,
-    ...(styleOverrides ? { style: styleOverrides } : {}),
-  });
+  const tokens = themeTokenCss(element);
+  const previousStyle = element.getAttribute('style');
+
+  if (tokens) {
+    element.setAttribute('style', previousStyle ? `${tokens}; ${previousStyle}` : tokens);
+  }
+
+  try {
+    // html-to-image applies `style` to its detached clone only, so the live page
+    // never flickers while the destination is captured through its closed clip.
+    return await toCanvas(element, {
+      ...options,
+      cacheBust: true,
+      ...(styleOverrides ? { style: styleOverrides } : {}),
+    });
+  } finally {
+    if (tokens) {
+      if (previousStyle === null) {
+        element.removeAttribute('style');
+      } else {
+        element.setAttribute('style', previousStyle);
+      }
+    }
+  }
 }

@@ -34,7 +34,7 @@ main.ts
 | `geometry.ts` | Pure functions. Given two rects, a corner, and progress, returns a `PaperFrame`. No DOM, no WebGL, no time. |
 | `paper-turn-renderer.ts` | Three.js overlay lifecycle: canvas, camera, mesh, texture, shadow, disposal. Translates a `PaperFrame` into GPU state. |
 | `paper-shaders.ts` | Front/reverse face selection, both printed faces, facing-based highlight, sheet fade. |
-| `capture.ts` | `html-to-image` capture with DPR and pixel-area caps from the profile. |
+| `capture.ts` | `html-to-image` capture with DPR and pixel-area caps from the profile, and Spectrum token inlining so the detached clone keeps its theme. |
 | `capabilities.ts` | Reduced-motion preference and WebGL/texture prerequisites. |
 | `timeline.ts` | One `requestAnimationFrame` loop producing normalized progress. |
 | `motion-profile.ts` | Durations, easing, bend depth, fold softness, mesh density, texture caps. |
@@ -241,6 +241,28 @@ silently discarded**. `sp-card` renders attribute-driven headings as slot
 fallbacks, so the captured texture came back with the artwork but no text, and
 the card visibly lost its label for the duration of the turn. Providing real
 slotted children is valid Spectrum usage and captures correctly.
+
+### The clone is detached from `<sp-theme>`
+
+Spectrum declares its ~3.4k design tokens on the `<sp-theme>` element, not on
+`:root` — descendants only resolve them by inheritance. `html-to-image` renders
+its clone inside an SVG `foreignObject`, which is detached from the document and
+therefore inherits nothing: every `var(--spectrum-*)` in the clone silently fell
+back. The texture came back with collapsed component padding, the wrong greys,
+and text metrics that no longer matched the box they were measured into, so the
+close button's label overflowed its pill on the sheet's reverse face while the
+live DOM was correct.
+
+The symptom is invisible on a machine that resolves the same fallbacks on both
+sides, which is why it reproduced on a designer's Mac (Adobe Clean installed)
+but not in headless Chromium.
+
+`captureElement` therefore inlines the resolved `--spectrum-*` tokens onto the
+capture root before handing it to `html-to-image`, and restores the element's
+original inline style in a `finally` block. Inline custom properties survive
+`cloneNode`, so the clone recovers the entire cascade. Enumeration uses
+`computedStyleMap()` and is cached per element; where that API is missing the
+capture proceeds untouched rather than failing.
 
 ## Performance
 
