@@ -107,27 +107,38 @@ wherever a triangle straddles the axis. The smooth form removed the artifact
 entirely — and made a denser mesh unnecessary, so the mesh stays inside the
 spec's 20×14 mobile budget.
 
-### The reveal follows the sheet's footprint
+### The sheet carries the reveal
 
 The destination is a stationary DOM surface beneath the overlay, uncovered by a
-`clip-path` polygon.
+`clip-path` polygon. That polygon stays collapsed to a degenerate point for the
+whole turn and opens to the full viewport only at progress 1.
 
-The polygon is computed over `baseRect` — the sheet's *current* footprint — but
-expressed as percentages of `destination`. That separation is what keeps the
-page from being exposed anywhere the fold has not yet swept. An earlier version
-clipped the whole viewport against eased progress, which read as a grey
-rectangular wipe sliding across the screen behind the card.
+This is deliberate. Because the sheet prints the destination page on its reverse
+face, uncovering the live DOM mid-turn draws the page *twice* in two different
+shapes. Two earlier versions of the reveal both failed for that reason:
 
-`revealProgress()` completes the uncovering at `REVEAL_COMPLETE_AT` (0.8) so the
-page is whole slightly before the sheet finishes settling, and `sheetAlpha()`
-cross-dissolves the sheet from `SHEET_FADE_START` (0.5) onward. Together these
-remove the pop at the end of the turn.
+- Clipping the whole viewport against eased progress read as a grey rectangular
+  wipe sliding across the screen behind the card.
+- Clipping against `baseRect` — the sheet's current footprint — replaced the
+  wipe with a flat lerped rectangle. It tracked the sheet's bounds but not its
+  *shape*, so it showed as a pale panel that was not part of the fold and that
+  hid the rest of the card list behind it.
+
+Letting the sheet tell the whole story removes the class of bug rather than
+tuning it. At progress 1 the sheet's geometry equals the destination rect
+exactly, so the handoff from texture to real DOM lands pixel-for-pixel and is
+invisible. Closing is symmetric: the first frame of a close already has the
+sheet flat over the viewport showing the page, so clipping the real DOM shut at
+that instant is equally imperceptible.
+
+Detail pages carry body sections and a bottom-pinned footer so that the reverse
+face has legible content at both ends of the sheet. Without it, the back read as
+an anonymous grey field and the direction of the turn was ambiguous.
 
 ### Constants
 
-`PERSPECTIVE_STRENGTH`, `FACING_FLOOR`, `REVEAL_COMPLETE_AT`,
-`SHEET_FADE_START`, and `ARC_BULGE` are module constants in `geometry.ts`;
-`SHADOW_LIFT_SCALE` is one in the renderer. They describe the *shape of the
+`PERSPECTIVE_STRENGTH`, `FACING_FLOOR`, and `ARC_BULGE` are module constants in
+`geometry.ts`; `SHADOW_LIFT_SCALE` is one in the renderer. They describe the *shape of the
 motion model* rather than a design-tunable knob, and promoting them to
 `MotionProfile` would widen a required interface that four test suites construct
 literals for. `MotionProfile` remains the place for anything a designer would
@@ -256,7 +267,7 @@ resolution is a deliberate, visible decision rather than a drift.
 
 Geometry is tested as pure functions on invariants — corner exchange in
 destination space, fold-axis corners held still, flatness at both endpoints,
-monotonic growth, reveal bounded by the sheet footprint — rather than by
+monotonic growth, the destination staying covered until the sheet lands — rather than by
 snapshotting coordinates. That keeps the suite meaningful while the motion is
 still being tuned.
 

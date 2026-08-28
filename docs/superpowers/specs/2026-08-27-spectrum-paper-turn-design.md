@@ -55,15 +55,21 @@ renderer must derive orientation, fold direction, and corner trajectories from t
 grabbed corner rather than hard-coding top-right behavior.
 
 The stationary full-page detail DOM is placed beneath the turning sheet before animation
-begins. As the fold advances, the destination is progressively exposed along the moving
-diagonal fold. The reveal must track the fold rather than appearing as an unrelated cross-fade
-or rectangular wipe.
+begins. Because the sheet is printed with the destination page on its reverse face, the sheet
+itself performs the reveal: the page becomes progressively visible as the turn exposes more of
+that reverse face along the moving diagonal fold.
 
-The exposed region is bounded by the sheet's own current footprint. The page must not become
-visible anywhere the sheet has not yet swept, and no full-viewport region of page background
-may slide independently of the turning surface. The uncovering completes slightly before the
-sheet settles, and the sheet cross-dissolves into the revealed page over the final part of the
-turn, so the transition resolves smoothly rather than popping at the end.
+The live destination DOM stays fully covered for the duration of the turn and is uncovered only
+when the sheet lands, where the sheet's geometry matches the destination rectangle exactly and
+the handoff from texture to DOM is imperceptible. No region of the destination — and no
+full-viewport region of page background — may become visible independently of the turning
+surface. Any reveal that paints a shape other than the fold itself, whether a cross-fade, a
+rectangular wipe, or a rectangle interpolated between the card and viewport bounds, is a defect:
+it draws the page twice in two different shapes.
+
+To make the reverse face legible mid-turn, detail pages must carry content that reaches both the
+top and the bottom of the page. A page whose content clusters at the top leaves the reverse
+reading as an anonymous field, which makes the direction of the turn ambiguous.
 
 To read as paper, the turning surface includes:
 
@@ -135,8 +141,8 @@ the duration of the turn.
 The initial full-motion target is approximately 650-800 ms, long enough for the diagonal exchange and reverse face to be legible without making navigation feel stalled. The fallback target is 180-220 ms.
 
 `MotionProfile` holds values a designer would plausibly retune. Constants that define the
-*shape* of the motion model itself — perspective strength, facing floor, reveal completion
-point, sheet fade start, arc bulge, shadow lift scaling — belong with the geometry and
+*shape* of the motion model itself — perspective strength, facing floor, arc bulge, shadow lift
+scaling — belong with the geometry and
 rendering code they describe, and are documented in the architecture notes rather than exposed
 as profile fields.
 
@@ -232,7 +238,7 @@ Visual comparisons will capture:
 
 - Start: the sheet aligns with the originating card.
 - Peak curl: curved edges, reverse face, highlights, and shadows are visible.
-- Diagonal midpoint: the destination is revealed along the moving fold and the corner exchange is legible.
+- Diagonal midpoint: the destination reads on the sheet's reverse face along the moving fold, the rest of the card list is still visible behind the sheet, and the corner exchange is legible.
 - Settled page: no overlay remains and the detail surface is ordinary Spectrum DOM.
 
 ## Success Criteria
@@ -242,8 +248,8 @@ The prototype is successful when all of the following are true:
 - The grabbed corner and its diagonal opposite visibly exchange positions.
 - The sheet grows continuously from the card to the full viewport without stalling, folding
   through itself, or popping to its end state.
-- Full-page content is progressively revealed beneath the moving diagonal fold, bounded by the
-  sheet's own footprint, with no independent background wipe.
+- Full-page content is revealed by the sheet's own reverse face along the moving diagonal fold,
+  with no independent background wipe and no flat panel of page content outside the fold.
 - Curvature, reverse-face treatment, deformation, highlights, and shadows create a plausible paper-like turn.
 - The captured sheet reproduces the source card faithfully, including its text.
 - Opening settles into normal Spectrum detail DOM with no transition overlay.
@@ -268,6 +274,30 @@ A full WebGL scene would offer maximum rendering control and visual fidelity. Ho
 The hybrid approach preserves accessible, responsive Spectrum DOM as the source of truth while using WebGL only where it provides unique value: the short-lived deforming sheet. It provides enough geometric and shading control to evaluate the paper-turn concept without committing the application UI to a canvas-based architecture.
 
 ## Revision history
+
+### 2026-08-29 — the sheet performs the reveal
+
+Once the reverse face was printed with the destination page, the separate DOM reveal became
+redundant — and actively harmful. It drew the destination twice in two different shapes.
+
+Two successive reveal implementations both failed on the running prototype. Clipping the whole
+viewport against eased progress read as a grey rectangular wipe sliding behind the card.
+Replacing it with a clip interpolated between the card bounds and the viewport tracked the
+sheet's *bounds* but not its *shape*, so mid-turn a flat pale panel of page content sat outside
+the fold and hid the rest of the card list behind it. Fading the sheet out over the same window
+compounded both, since the page was then visible through the sheet that was also printing it.
+
+The corrected model removes the class of defect rather than tuning it. The sheet keeps constant
+opacity, and the live destination DOM stays covered for the entire turn, uncovering only at the
+final frame where the sheet's geometry already equals the destination rectangle. Closing is
+symmetric: its first frame has the sheet flat over the viewport showing the page, so clipping
+the DOM shut at that instant is equally invisible.
+
+This revision also adds a content requirement. The reverse face can only communicate the page if
+the page has content at both ends, so detail pages now carry body sections and a bottom-pinned
+footer.
+
+Nothing in the scope, architecture, accessibility, resilience, or fallback sections changed.
 
 ### 2026-08-28 — reverse face prints the destination page
 
@@ -302,7 +332,8 @@ positions *in the destination frame*. This revision states that explicitly and r
 pixel-space construction.
 
 The same review surfaced three further requirements now recorded above: the reveal must be
-bounded by the sheet's footprint rather than wiping the viewport, the contact shadow must be
+bounded by the sheet rather than wiping the viewport (superseded by the 2026-08-29 revision,
+which makes the sheet perform the reveal outright), the contact shadow must be
 gated on how far the sheet is lifted, and the sheet must keep a curved cross-section at peak
 curl instead of collapsing edge-on. A capture-fidelity requirement was added after the source
 texture was found to be losing card text.
