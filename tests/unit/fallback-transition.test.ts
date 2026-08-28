@@ -40,6 +40,7 @@ describe('createFallbackRunner', () => {
         fill: 'both',
       },
     );
+    expect(animation.cancel).toHaveBeenCalledTimes(1);
   });
 
   it('runs the close fallback animation with the exact keyframes and options', async () => {
@@ -64,6 +65,7 @@ describe('createFallbackRunner', () => {
         fill: 'both',
       },
     );
+    expect(animation.cancel).toHaveBeenCalledTimes(1);
   });
 
   it('rejects invalid durations before animating', async () => {
@@ -148,6 +150,7 @@ describe('createFallbackRunner', () => {
     const runner = createFallbackRunner(element);
 
     await expect(runner('close', 200, controller.signal)).rejects.toBe(failure);
+    expect(animation.cancel).toHaveBeenCalledTimes(1);
     expect(removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function));
   });
 });

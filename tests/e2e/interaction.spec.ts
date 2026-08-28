@@ -124,6 +124,20 @@ async function waitForFallbackPastMidpoint(page: Page, direction: 'open' | 'clos
   );
 }
 
+async function fullMotionDetailSnapshot(page: Page) {
+  return detailSurface(page).evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      animationCount: element.getAnimations().length,
+      hidden: element.hidden,
+      inert: element.inert,
+      opacity: Number(style.opacity),
+      transform: style.transform,
+      visibility: style.visibility,
+    };
+  });
+}
+
 test('mouse opening and reverse closing settle on normal Spectrum DOM', async ({ page }) => {
   await page.goto('/?duration=120');
   const card = page.locator('[data-card-trigger]').first();
@@ -327,6 +341,54 @@ test('Escape late in explicit fallback open settles open and late close settles 
     expect
       .poll(async () => (await fallbackAnimationSnapshot(page)).animationCount, { timeout: 1_800 })
       .toBe(0),
+  ]);
+});
+
+test('mixed fallback close cleanup does not poison the next full-motion reopen', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.goto('/?duration=120');
+
+  await openCardAndExpectHeading(page, 0, 'Spectrum foundations');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await closeButton(page).click();
+  await expect(cardTrigger(page, 0)).toBeFocused();
+  await expect(detailSurface(page)).toBeHidden();
+  await expect(root(page)).toHaveAttribute('data-transition-state', 'idle');
+  await expect(overlay(page)).toHaveCount(0);
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await setDurationMs(page, 10_000);
+  await cardTrigger(page, 0).click();
+  await expect(overlay(page)).toHaveCount(1);
+  await expect(root(page)).toHaveAttribute('data-transition-state', 'opening');
+  await page.waitForFunction(() => {
+    const overlayElement = document.querySelector<HTMLElement>('.paper-turn-overlay');
+    const detailElement = document.querySelector<HTMLElement>('[data-detail-surface]');
+    const progress = Number(overlayElement?.getAttribute('data-progress'));
+
+    return (
+      overlayElement !== null &&
+      detailElement !== null &&
+      !detailElement.hidden &&
+      Number.isFinite(progress) &&
+      progress > 0.25 &&
+      progress < 0.75
+    );
+  });
+
+  const detailState = await fullMotionDetailSnapshot(page);
+  expect(detailState.hidden).toBe(false);
+  expect(detailState.inert).toBe(true);
+  expect(detailState.visibility).toBe('visible');
+  expect(detailState.opacity).toBe(1);
+  expect(detailState.transform).toBe('none');
+  expect(detailState.animationCount).toBe(0);
+
+  await Promise.all([
+    expect(root(page)).toHaveAttribute('data-transition-state', 'open', { timeout: 12_000 }),
+    expect(detailHeading(page)).toBeFocused({ timeout: 12_000 }),
+    expect(overlay(page)).toHaveCount(0, { timeout: 12_000 }),
   ]);
 });
 

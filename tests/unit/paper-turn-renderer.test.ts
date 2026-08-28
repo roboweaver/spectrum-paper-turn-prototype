@@ -347,11 +347,14 @@ describe('PaperTurnRenderer', () => {
     expect(overlay?.getAttribute('data-mesh-vertices')).toBe(
       String((input.profile.meshColumns + 1) * (input.profile.meshRows + 1)),
     );
+    expect(overlay?.getAttribute('aria-hidden')).toBe('true');
+    expect(overlay?.getAttribute('role')).toBe('presentation');
     expect(document.body.children).toHaveLength(1);
     expect(document.body.firstElementChild).toBe(overlay);
     expect(overlay?.children).toHaveLength(1);
     expect(overlay?.firstElementChild).toBe(canvas);
     expect(document.body.querySelectorAll('canvas')).toHaveLength(1);
+    expect(canvas?.getAttribute('aria-hidden')).toBe('true');
     expect(threeMock.renderers[0]?.setPixelRatio).toHaveBeenCalledWith(input.profile.maxTextureDpr);
     expect(threeMock.renderers[0]?.setSize).toHaveBeenCalledWith(
       input.destinationRect.width,
