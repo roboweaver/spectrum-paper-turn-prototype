@@ -83,7 +83,7 @@ describe('captureElement', () => {
     const canvas = document.createElement('canvas');
     const toCanvas = vi.fn(async () => canvas);
 
-    const result = await captureElement(element, defaultMotionProfile, toCanvas, 3);
+    const result = await captureElement(element, defaultMotionProfile, undefined, toCanvas, 3);
 
     expect(result).toBe(canvas);
     expect(toCanvas).toHaveBeenCalledWith(element, {
@@ -94,6 +94,33 @@ describe('captureElement', () => {
     });
   });
 
+  it('applies style overrides to the clone so a clipped destination still captures', async () => {
+    const element = createSourceElement(800, 600);
+    const canvas = document.createElement('canvas');
+    const toCanvas = vi.fn(async () => canvas);
+
+    await captureElement(element, defaultMotionProfile, { clipPath: 'none' }, toCanvas, 3);
+
+    expect(toCanvas).toHaveBeenCalledWith(element, {
+      pixelRatio: 2,
+      width: 800,
+      height: 600,
+      cacheBust: true,
+      style: { clipPath: 'none' },
+    });
+  });
+
+  it('omits the style option when no overrides are supplied', async () => {
+    const element = createSourceElement(800, 600);
+    const toCanvas = vi.fn(async (_element: HTMLElement, _options: Record<string, unknown>) =>
+      document.createElement('canvas'),
+    );
+
+    await captureElement(element, defaultMotionProfile, undefined, toCanvas, 3);
+
+    expect(toCanvas.mock.calls[0]?.[1]).not.toHaveProperty('style');
+  });
+
   it('rethrows capture failures by identity', async () => {
     const element = createSourceElement(800, 600);
     const error = new Error('tainted source');
@@ -101,14 +128,14 @@ describe('captureElement', () => {
       throw error;
     });
 
-    await expect(captureElement(element, defaultMotionProfile, toCanvas, 3)).rejects.toBe(error);
+    await expect(captureElement(element, defaultMotionProfile, undefined, toCanvas, 3)).rejects.toBe(error);
   });
 
   it('rejects empty bounds before calling html-to-image', async () => {
     const element = createSourceElement(0, 600);
     const toCanvas = vi.fn();
 
-    await expect(captureElement(element, defaultMotionProfile, toCanvas, 3)).rejects.toThrow(
+    await expect(captureElement(element, defaultMotionProfile, undefined, toCanvas, 3)).rejects.toThrow(
       'Cannot capture an element with empty bounds',
     );
     expect(toCanvas).not.toHaveBeenCalled();

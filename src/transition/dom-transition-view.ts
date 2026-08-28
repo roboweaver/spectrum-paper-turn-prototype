@@ -60,6 +60,10 @@ export class DomTransitionView implements TransitionView {
     ) ?? null;
   }
 
+  public resolveDestination(): HTMLElement {
+    return this.options.detail;
+  }
+
   public measureSource(source: HTMLElement): Rect {
     return measureRect(source.getBoundingClientRect());
   }

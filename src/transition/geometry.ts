@@ -240,8 +240,46 @@ export function revealClipPath(rect: Rect, grabbed: Corner, progress: number): s
   return clipPathBetween(rect, rect, grabbed, progress);
 }
 
-export function buildPaperFrame(
-  source: Rect,
+/**
+ * Texture coordinates for the sheet's reverse face.
+ *
+ * The sheet is one piece of paper: the tile is printed on the front and the
+ * destination page on the back. Turning it over reflects the back across the
+ * fold axis, so the back samples the mirrored uv rather than the front's. At
+ * rest the back therefore reads as the page mirrored and shrunk onto the tile;
+ * at the end of the turn the front reads as the tile mirrored and stretched
+ * across the page.
+ *
+ * The reflection is fixed for a given grabbed corner, so this is a static
+ * attribute rather than per-frame work.
+ */
+export function backFaceUvs(grabbed: Corner, columns: number, rows: number): Float32Array {
+  validatePositiveInteger(columns, 'columns');
+  validatePositiveInteger(rows, 'rows');
+
+  const basis = foldBasis(grabbed);
+  const uvs = new Float32Array((columns + 1) * (rows + 1) * 2);
+
+  for (let row = 0; row <= rows; row += 1) {
+    const v = row / rows;
+
+    for (let column = 0; column <= columns; column += 1) {
+      const u = column / columns;
+      const offsetX = u - basis.origin.x;
+      const offsetY = v - basis.origin.y;
+      const along = offsetX * basis.axis.x + offsetY * basis.axis.y;
+      const perp = offsetX * basis.normal.x + offsetY * basis.normal.y;
+      const index = (row * (columns + 1) + column) * 2;
+
+      uvs[index] = basis.origin.x + along * basis.axis.x - perp * basis.normal.x;
+      uvs[index + 1] = basis.origin.y + along * basis.axis.y - perp * basis.normal.y;
+    }
+  }
+
+  return uvs;
+}
+
+export function buildPaperFrame(  source: Rect,
   destination: Rect,
   grabbed: Corner,
   progress: number,

@@ -12,7 +12,7 @@ import {
   WebGLRenderer,
 } from 'three';
 
-import { buildPaperFrame } from './geometry';
+import { backFaceUvs, buildPaperFrame } from './geometry';
 import { paperTurnFragmentShader, paperTurnVertexShader } from './paper-shaders';
 import type { PaperFrame, PaperRenderer, Rect, RendererInput } from './types';
 
@@ -72,6 +72,7 @@ function cleanupConstruction(resources: {
   paperMaterial?: ShaderMaterial;
   shadowMaterial?: MeshBasicMaterial;
   texture?: CanvasTexture;
+  backTexture?: CanvasTexture;
   scene?: Scene;
   paperMesh?: Mesh<BufferGeometry, ShaderMaterial>;
   shadowMesh?: Mesh<BufferGeometry, MeshBasicMaterial>;
@@ -84,6 +85,7 @@ function cleanupConstruction(resources: {
   resources.paperMaterial?.dispose();
   resources.shadowMaterial?.dispose();
   resources.texture?.dispose();
+  resources.backTexture?.dispose();
 
   if (resources.renderer) {
     resources.renderer.dispose();
@@ -148,6 +150,7 @@ export class PaperTurnRenderer implements PaperRenderer {
   private readonly texture: CanvasTexture;
   private readonly paperMesh: Mesh<BufferGeometry, ShaderMaterial>;
   private readonly shadowMesh: Mesh<BufferGeometry, MeshBasicMaterial>;
+  private readonly backTexture: CanvasTexture | null;
   private readonly positions: Float32Array;
   private readonly shade: Float32Array;
   private readonly positionAttribute: BufferAttribute;
@@ -171,6 +174,7 @@ export class PaperTurnRenderer implements PaperRenderer {
       paperMaterial?: ShaderMaterial;
       shadowMaterial?: MeshBasicMaterial;
       texture?: CanvasTexture;
+      backTexture?: CanvasTexture;
       scene?: Scene;
       paperMesh?: Mesh<BufferGeometry, ShaderMaterial>;
       shadowMesh?: Mesh<BufferGeometry, MeshBasicMaterial>;
@@ -215,6 +219,13 @@ export class PaperTurnRenderer implements PaperRenderer {
       geometry.setAttribute('position', positionAttribute);
       geometry.setAttribute('uv', uvAttribute);
       geometry.setAttribute('shade', shadeAttribute);
+      geometry.setAttribute(
+        'backUv',
+        new BufferAttribute(
+          backFaceUvs(input.grabbedCorner, input.profile.meshColumns, input.profile.meshRows),
+          2,
+        ),
+      );
       geometry.setIndex(buildMeshIndices(input.profile.meshColumns, input.profile.meshRows));
 
       const texture = new CanvasTexture(input.texture);
@@ -224,9 +235,23 @@ export class PaperTurnRenderer implements PaperRenderer {
       texture.flipY = false;
       resources.texture = texture;
 
+      // The sheet is one page: the source is printed on the front and the
+      // destination on the back. Without a destination capture the reverse
+      // degrades to blank paper rather than failing the transition.
+      let backTexture: CanvasTexture | undefined;
+
+      if (input.backTexture) {
+        backTexture = new CanvasTexture(input.backTexture);
+        backTexture.colorSpace = SRGBColorSpace;
+        backTexture.flipY = false;
+        resources.backTexture = backTexture;
+      }
+
       const paperMaterial = new ShaderMaterial({
         uniforms: {
           paperTexture: { value: texture },
+          backTexture: { value: backTexture ?? texture },
+          backTextureMix: { value: backTexture ? 1 : 0 },
           shadowStrength: { value: input.profile.shadowStrength },
           sheetAlpha: { value: 1 },
         },
@@ -267,6 +292,7 @@ export class PaperTurnRenderer implements PaperRenderer {
       this.paperMaterial = paperMaterial;
       this.shadowMaterial = shadowMaterial;
       this.texture = texture;
+      this.backTexture = backTexture ?? null;
       this.paperMesh = paperMesh;
       this.shadowMesh = shadowMesh;
       this.positions = positions;
@@ -317,6 +343,7 @@ export class PaperTurnRenderer implements PaperRenderer {
     this.paperMaterial.dispose();
     this.shadowMaterial.dispose();
     this.texture.dispose();
+    this.backTexture?.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
     removeNode(this.renderer.domElement);

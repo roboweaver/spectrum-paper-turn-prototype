@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  backFaceUvs,
   buildPaperFrame,
   cornerPoint,
+  cornerUv,
   oppositeCorner,
   revealClipPath,
   vertexIndex,
@@ -244,5 +246,57 @@ describe('paper geometry', () => {
     ['rect.left', { ...destination, left: Infinity }],
   ] as const)('rejects invalid %s in revealClipPath', (field, rect) => {
     expect(() => revealClipPath(rect, 'top-right', 0.5)).toThrow(field);
+  });
+});
+
+describe('back-face uvs', () => {
+  const readUv = (uvs: Float32Array, corner: Corner, columns: number, rows: number): [number, number] => {
+    const index = vertexIndex(corner, columns, rows) * 2;
+    return [uvs[index]!, uvs[index + 1]!];
+  };
+
+  it('sizes the attribute to the mesh', () => {
+    expect(backFaceUvs('top-right', 4, 3)).toHaveLength((4 + 1) * (3 + 1) * 2);
+  });
+
+  it.each([
+    ['top-right', 'bottom-left'],
+    ['bottom-left', 'top-right'],
+    ['top-left', 'bottom-right'],
+    ['bottom-right', 'top-left'],
+  ] as const)('mirrors the %s corner onto %s', (grabbedCorner, mirroredCorner) => {
+    const uvs = backFaceUvs(grabbedCorner, 4, 4);
+    const [u, v] = readUv(uvs, grabbedCorner, 4, 4);
+    const expected = cornerUv[mirroredCorner];
+
+    expect(u).toBeCloseTo(expected.x, 6);
+    expect(v).toBeCloseTo(expected.y, 6);
+  });
+
+  it.each(corners)('holds the fold-axis corners still for %s', (grabbedCorner) => {
+    const uvs = backFaceUvs(grabbedCorner, 4, 4);
+    const axisCorners = corners.filter(
+      (corner) => corner !== grabbedCorner && corner !== oppositeCorner(grabbedCorner),
+    );
+
+    for (const corner of axisCorners) {
+      const [u, v] = readUv(uvs, corner, 4, 4);
+      expect(u).toBeCloseTo(cornerUv[corner].x, 6);
+      expect(v).toBeCloseTo(cornerUv[corner].y, 6);
+    }
+  });
+
+  it('stays inside the unit square so the back never samples outside the page', () => {
+    for (const grabbedCorner of corners) {
+      for (const value of backFaceUvs(grabbedCorner, 6, 4)) {
+        expect(value).toBeGreaterThanOrEqual(-1e-6);
+        expect(value).toBeLessThanOrEqual(1 + 1e-6);
+      }
+    }
+  });
+
+  it('rejects a degenerate mesh', () => {
+    expect(() => backFaceUvs('top-right', 0, 3)).toThrow(/greater than or equal to 1/);
+    expect(() => backFaceUvs('top-right', 3, 0)).toThrow(/greater than or equal to 1/);
   });
 });

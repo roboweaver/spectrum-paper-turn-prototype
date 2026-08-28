@@ -68,7 +68,9 @@ turn, so the transition resolves smoothly rather than popping at the end.
 To read as paper, the turning surface includes:
 
 - Curved side edges produced by mesh deformation.
-- A visible reverse face while the sheet curls.
+- A visible reverse face while the sheet curls. The reverse is not blank paper: the sheet is
+  printed on both sides, with the source card on the front and the destination page on the
+  back, so the turn reveals the page itself rather than an anonymous backing.
 - Highlights and shadows that change with bend and orientation.
 - A contact or cast shadow near the fold and underlying page. The shadow must be tied to how
   far the sheet is lifted, so it is absent at both endpoints and never reads as a flat slab
@@ -266,6 +268,24 @@ A full WebGL scene would offer maximum rendering control and visual fidelity. Ho
 The hybrid approach preserves accessible, responsive Spectrum DOM as the source of truth while using WebGL only where it provides unique value: the short-lived deforming sheet. It provides enough geometric and shading control to evaluate the paper-turn concept without committing the application UI to a canvas-based architecture.
 
 ## Revision history
+
+### 2026-08-28 — reverse face prints the destination page
+
+The original wording asked only for "a visible reverse face," which the first implementation
+satisfied with a warm paper white. Review of the running prototype showed that this reads as a
+blank grey wipe: the sheet turns over to reveal nothing, so the destination page still appears
+to pop in at the end rather than arriving on the sheet.
+
+The clarified model is that the sheet is a single physical page printed on both sides. The
+front is the source card and the reverse is the destination page. At rest the reverse is the
+page mirrored and shrunk onto the tile; at the end of the turn the front is the tile mirrored
+and stretched across the page. Because both faces stretch to the sheet's current rect, the
+reverse needs only its own UV set — the reflection of each vertex UV across the fold axis —
+rather than separate geometry, and that reflection is fixed for a given grabbed corner.
+
+The coordinator now captures the destination alongside the source. If that capture fails the
+reverse falls back to the previous paper white, so the failure degrades the finish rather than
+aborting the transition.
 
 ### 2026-08-28 — corner-exchange geometry clarified
 

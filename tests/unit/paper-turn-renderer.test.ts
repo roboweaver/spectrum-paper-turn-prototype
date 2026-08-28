@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildPaperFrame } from '../../src/transition/geometry';
+import { backFaceUvs, buildPaperFrame } from '../../src/transition/geometry';
 import { defaultMotionProfile } from '../../src/transition/motion-profile';
 import type { RendererInput } from '../../src/transition/types';
 
@@ -34,6 +34,7 @@ vi.mock('three', () => {
   class MockCanvasTexture {
     image: HTMLCanvasElement;
     colorSpace?: unknown;
+    flipY?: boolean;
     dispose = vi.fn();
 
     constructor(image: HTMLCanvasElement) {
@@ -228,10 +229,18 @@ const threeMock = (
   threeModule as unknown as {
     __mock: {
       geometries: Array<{
-        attributes: Record<string, { array: ArrayLike<number>; needsUpdate: boolean }>;
+        attributes: Record<
+          string,
+          { array: ArrayLike<number>; itemSize: number; needsUpdate: boolean }
+        >;
         dispose: ReturnType<typeof vi.fn>;
       }>;
-      materials: Array<Record<string, unknown> & { dispose: ReturnType<typeof vi.fn> }>;
+      materials: Array<
+        Record<string, unknown> & {
+          uniforms?: Record<string, { value: unknown }>;
+          dispose: ReturnType<typeof vi.fn>;
+        }
+      >;
       meshes: Array<{ position: { set: ReturnType<typeof vi.fn> } }>;
       scenes: Array<{ objects: unknown[] }>;
       cameras: Array<Record<string, unknown>>;
@@ -242,7 +251,12 @@ const threeMock = (
         dispose: ReturnType<typeof vi.fn>;
         forceContextLoss: ReturnType<typeof vi.fn>;
       }>;
-      textures: Array<{ colorSpace?: unknown; dispose: ReturnType<typeof vi.fn> }>;
+      textures: Array<{
+        image: HTMLCanvasElement;
+        colorSpace?: unknown;
+        flipY?: boolean;
+        dispose: ReturnType<typeof vi.fn>;
+      }>;
       failAt: 'mesh-basic-material' | null;
       reset(): void;
     };
@@ -255,6 +269,7 @@ function createInput(): RendererInput {
     destinationRect: { left: 0, top: 0, width: 1000, height: 700 },
     grabbedCorner: 'top-right',
     texture: document.createElement('canvas'),
+    backTexture: null,
     profile: defaultMotionProfile,
   };
 }
@@ -315,9 +330,12 @@ describe('paper mesh buffers', () => {
 describe('paper shaders', () => {
   it('forwards uv and shade through the vertex shader', () => {
     expect(paperTurnVertexShader).toContain('attribute float shade;');
+    expect(paperTurnVertexShader).toContain('attribute vec2 backUv;');
     expect(paperTurnVertexShader).toContain('varying vec2 vUv;');
+    expect(paperTurnVertexShader).toContain('varying vec2 vBackUv;');
     expect(paperTurnVertexShader).toContain('varying float vShade;');
     expect(paperTurnVertexShader).toContain('vUv = uv;');
+    expect(paperTurnVertexShader).toContain('vBackUv = backUv;');
     expect(paperTurnVertexShader).toContain('vShade = shade;');
     expect(paperTurnVertexShader).toContain(
       'gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
@@ -328,13 +346,54 @@ describe('paper shaders', () => {
     const normalizedShader = paperTurnFragmentShader.replace(/\s+/g, ' ').trim();
 
     expect(paperTurnFragmentShader).toContain('uniform sampler2D paperTexture;');
+    expect(paperTurnFragmentShader).toContain('uniform sampler2D backTexture;');
+    expect(paperTurnFragmentShader).toContain('uniform float backTextureMix;');
     expect(paperTurnFragmentShader).toContain('uniform float shadowStrength;');
     expect(paperTurnFragmentShader).toContain('uniform float sheetAlpha;');
     expect(normalizedShader).toContain(
-      'vec3 reverse = mix(vec3(0.94, 0.93, 0.91), front.rgb, 0.12); float highlight = 0.68 + vShade * 0.32; vec3 face = gl_FrontFacing ? front.rgb : reverse; float reverseShadow = gl_FrontFacing ? 0.0 : shadowStrength * 0.30; gl_FragColor = vec4(face * highlight * (1.0 - reverseShadow), front.a * sheetAlpha); #include <colorspace_fragment>',
+      'vec4 back = texture2D(backTexture, vBackUv); vec3 blank = mix(vec3(0.94, 0.93, 0.91), front.rgb, 0.12); vec3 reverse = mix(blank, back.rgb, backTextureMix * back.a); float highlight = 0.68 + vShade * 0.32; vec3 face = gl_FrontFacing ? front.rgb : reverse; float reverseShadow = gl_FrontFacing ? 0.0 : shadowStrength * 0.30; float alpha = gl_FrontFacing ? front.a : max(front.a, backTextureMix * back.a); gl_FragColor = vec4(face * highlight * (1.0 - reverseShadow), alpha * sheetAlpha); #include <colorspace_fragment>',
     );
     expect(normalizedShader).not.toContain('reverseBase');
-    expect(normalizedShader).not.toContain('reverse = reverseBase * highlight;');
+  });
+});
+
+describe('PaperTurnRenderer reverse face', () => {
+  it('prints the destination capture on the back with mirrored uvs', () => {
+    const backTexture = document.createElement('canvas');
+    const input: RendererInput = { ...createInput(), backTexture };
+    const renderer = new PaperTurnRenderer(input);
+    const geometry = threeMock.geometries[0];
+    const uniforms = threeMock.materials[0]?.uniforms;
+
+    expect(threeMock.textures).toHaveLength(2);
+    expect(threeMock.textures[1]?.image).toBe(backTexture);
+    // Screen-space y means the default bottom-up sampling would invert the page.
+    expect(threeMock.textures[1]?.flipY).toBe(false);
+    expect(uniforms?.backTexture?.value).toBe(threeMock.textures[1]);
+    expect(uniforms?.backTextureMix?.value).toBe(1);
+
+    const backUv = geometry?.attributes.backUv;
+    expect(backUv?.itemSize).toBe(2);
+    expect(backUv?.array).toEqual(
+      backFaceUvs(input.grabbedCorner, input.profile.meshColumns, input.profile.meshRows),
+    );
+
+    renderer.dispose();
+
+    expect(threeMock.textures[1]?.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('degrades to blank paper when the destination capture is unavailable', () => {
+    const renderer = new PaperTurnRenderer({ ...createInput(), backTexture: null });
+    const uniforms = threeMock.materials[0]?.uniforms;
+
+    expect(threeMock.textures).toHaveLength(1);
+    expect(uniforms?.backTexture?.value).toBe(threeMock.textures[0]);
+    expect(uniforms?.backTextureMix?.value).toBe(0);
+
+    renderer.dispose();
+
+    expect(threeMock.textures[0]?.dispose).toHaveBeenCalledTimes(1);
   });
 });
 

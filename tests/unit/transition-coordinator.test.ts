@@ -84,6 +84,7 @@ function getActiveFallbackTiming(coordinator: TransitionCoordinator): ActiveFall
 
 function harness(options: HarnessOptions = {}) {
   const source = document.createElement('button');
+  const detail = document.createElement('main');
   source.dataset.sourceId = 'one';
   document.body.append(source);
 
@@ -108,6 +109,7 @@ function harness(options: HarnessOptions = {}) {
     prepareDetail: vi.fn(),
     measureDestination: vi.fn(() => ({ left: 0, top: 0, width: 1000, height: 700 })),
     resolveSource: vi.fn(() => (options.sourceExists === false ? null : source)),
+    resolveDestination: vi.fn(() => detail),
     measureSource: vi.fn(() => ({ left: 100, top: 80, width: 240, height: 160 })),
     setDetailClip: vi.fn(),
     setSourceHidden: vi.fn(),
@@ -166,6 +168,44 @@ describe('TransitionCoordinator', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+  });
+
+  it('prints the destination on the sheet reverse by capturing through its closed clip', async () => {
+    const { coordinator, dependencies, view, request } = harness();
+    const backTexture = document.createElement('canvas');
+    const sourceTexture = document.createElement('canvas');
+    dependencies.capture = vi.fn(async (element: HTMLElement) =>
+      element === view.resolveDestination() ? backTexture : sourceTexture,
+    );
+
+    await coordinator.open(request);
+
+    expect(dependencies.capture).toHaveBeenCalledWith(
+      view.resolveDestination(),
+      dependencies.profile,
+      { clipPath: 'none' },
+    );
+    expect(dependencies.createRenderer).toHaveBeenCalledWith(
+      expect.objectContaining({ texture: sourceTexture, backTexture }),
+    );
+  });
+
+  it('degrades the reverse to blank paper when the destination capture fails', async () => {
+    const { coordinator, dependencies, view, request } = harness();
+    dependencies.capture = vi.fn(async (element: HTMLElement) => {
+      if (element === view.resolveDestination()) {
+        throw new Error('destination capture failed');
+      }
+
+      return document.createElement('canvas');
+    });
+
+    await coordinator.open(request);
+
+    expect(coordinator.state).toBe('open');
+    expect(dependencies.createRenderer).toHaveBeenCalledWith(
+      expect.objectContaining({ backTexture: null }),
+    );
   });
 
   it('opens through preparing and opening before settling on active detail DOM', async () => {
@@ -426,6 +466,7 @@ describe('TransitionCoordinator', () => {
 
     const closing = coordinator.close();
     await flushMicrotasks();
+    await flushMicrotasks();
     trigger.remove();
     source.remove();
     document.body.append(replacement);
@@ -477,6 +518,7 @@ describe('TransitionCoordinator', () => {
     );
 
     const closing = coordinator.close();
+    await flushMicrotasks();
     await flushMicrotasks();
     trigger.remove();
     document.body.prepend(replacement);

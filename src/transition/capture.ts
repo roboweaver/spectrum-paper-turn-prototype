@@ -83,6 +83,7 @@ export function textureCaptureOptions(
 export async function captureElement(
   element: HTMLElement,
   profile: MotionProfile,
+  styleOverrides?: Partial<CSSStyleDeclaration>,
   toCanvas: ToCanvas = htmlToCanvas,
   devicePixelRatio: number = window.devicePixelRatio,
 ): Promise<HTMLCanvasElement> {
@@ -93,5 +94,11 @@ export async function captureElement(
   }
 
   const options = textureCaptureOptions(width, height, devicePixelRatio, profile);
-  return toCanvas(element, { ...options, cacheBust: true });
+  // html-to-image applies `style` to its detached clone only, so the live page
+  // never flickers while the destination is captured through its closed clip.
+  return toCanvas(element, {
+    ...options,
+    cacheBust: true,
+    ...(styleOverrides ? { style: styleOverrides } : {}),
+  });
 }

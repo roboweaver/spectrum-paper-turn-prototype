@@ -18,7 +18,7 @@ main.ts
         └── TransitionCoordinator ── owns the lifecycle and all cleanup
               ├── DomTransitionView ─ every DOM mutation the transition makes
               ├── capabilities ────── decides full motion vs. fallback
-              ├── capture ─────────── source card → canvas texture
+              ├── capture ─────────── card + page → canvas textures
               ├── PaperTurnRenderer ─ the short-lived WebGL overlay
               │     ├── geometry ──── the deformation math
               │     └── paper-shaders  front/reverse face shading
@@ -33,7 +33,7 @@ main.ts
 | `dom-transition-view.ts` | The single seam through which the transition touches the DOM. Keeps the coordinator testable without a browser. |
 | `geometry.ts` | Pure functions. Given two rects, a corner, and progress, returns a `PaperFrame`. No DOM, no WebGL, no time. |
 | `paper-turn-renderer.ts` | Three.js overlay lifecycle: canvas, camera, mesh, texture, shadow, disposal. Translates a `PaperFrame` into GPU state. |
-| `paper-shaders.ts` | Front/reverse face selection, facing-based highlight, sheet fade. |
+| `paper-shaders.ts` | Front/reverse face selection, both printed faces, facing-based highlight, sheet fade. |
 | `capture.ts` | `html-to-image` capture with DPR and pixel-area caps from the profile. |
 | `capabilities.ts` | Reduced-motion preference and WebGL/texture prerequisites. |
 | `timeline.ts` | One `requestAnimationFrame` loop producing normalized progress. |
@@ -142,10 +142,47 @@ That choice has one consequence worth recording: Three's `CanvasTexture`
 defaults to `flipY = true`, which under a y-down camera samples the captured
 card upside down. The renderer sets `texture.flipY = false`.
 
-The fragment shader picks the face from `gl_FrontFacing`: the front samples the
-captured card, the reverse is a warm paper white with a faint bleed-through of
-the front. Highlight is driven by the per-vertex facing term, floored at
-`FACING_FLOOR` so an edge-on sheet dims without going muddy grey.
+The fragment shader picks the face from `gl_FrontFacing`. Highlight is driven by
+the per-vertex facing term, floored at `FACING_FLOOR` so an edge-on sheet dims
+without going muddy grey.
+
+### Two printed faces
+
+The sheet is one physical page printed on both sides: the **front is the source
+card**, the **reverse is the destination page**. So at rest the reverse reads as
+the page mirrored and shrunk onto the tile, and at the end of the turn the front
+reads as the tile mirrored and stretched across the page.
+
+Both faces stretch to the sheet's current rect, so the reverse needs its own UV
+set rather than its own geometry. `backFaceUvs()` reflects every vertex UV across
+the fold axis returned by `foldBasis(grabbed)`:
+
+```
+offset = uv - basis.origin
+along  = offset · basis.axis
+perp   = offset · basis.normal
+backUv = basis.origin + along * axis - perp * normal
+```
+
+For `top-right` this reduces to `(u, v) → (v, u)`. Sanity check: the card's
+top-right UV `(1, 0)` maps to the page's bottom-left `(0, 1)`, which is exactly
+where that vertex lands at progress 1. The reflection depends only on the grabbed
+corner, so it is computed **once at construction**, not per frame.
+
+The shader carries a second sampler and a `backTextureMix` flag. When the
+destination capture fails, `backTextureMix` is `0` and the reverse falls back to
+the previous warm paper white, so a capture failure degrades rather than breaks.
+Back-face alpha is `max(front.a, backTextureMix * back.a)` so an opaque page
+capture does not inherit the card's transparent rounded-corner notches once it is
+stretched to viewport size.
+
+Capturing the destination has one trap. During `preparing` the detail element is
+already displayed but clipped to a point, and `html-to-image` **clones** the node,
+so the clone would inherit that clip and capture nothing. Setting a full clip on
+the real element would flash the page. Instead the coordinator passes
+`{ clipPath: 'none' }` as a style override, which `html-to-image` applies to the
+clone only. Both captures run under a single `Promise.all` so the full-viewport
+destination capture does not double click-to-animate latency.
 
 A separate shadow mesh provides ground contact. Its opacity is **gated on
 `lift`**, so it is `0` at both endpoints. Before this it was a constant-opacity

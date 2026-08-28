@@ -210,7 +210,12 @@ export class TransitionCoordinator extends EventTarget {
 
     const sourceRect = this.view.measureSource(active.source);
     const destinationRect = this.view.measureDestination();
-    const texture = await this.dependencies.capture(active.source, this.dependencies.profile);
+    // Both faces are captured together so the reverse never doubles the
+    // click-to-animate latency.
+    const [texture, backTexture] = await Promise.all([
+      this.dependencies.capture(active.source, this.dependencies.profile),
+      this.captureDestination(),
+    ]);
 
     if (controller.signal.aborted) {
       throw new DOMException('The operation was aborted.', 'AbortError');
@@ -221,6 +226,7 @@ export class TransitionCoordinator extends EventTarget {
       destinationRect,
       grabbedCorner: active.request.grabbedCorner,
       texture,
+      backTexture,
       profile: this.dependencies.profile,
     });
     this.view.setSourceHidden(active.source, true);
@@ -246,6 +252,26 @@ export class TransitionCoordinator extends EventTarget {
     );
 
     this.requireActive().controller = null;
+  }
+
+  /**
+   * Captures the destination page for the sheet's reverse face.
+   *
+   * The destination is already displayed but clipped to a point, so the clip is
+   * neutralised on html-to-image's clone rather than on the live element. A
+   * failure here only costs the printed reverse, so it degrades to blank paper
+   * instead of failing the whole transition.
+   */
+  private async captureDestination(): Promise<HTMLCanvasElement | null> {
+    try {
+      return await this.dependencies.capture(
+        this.view.resolveDestination(),
+        this.dependencies.profile,
+        { clipPath: 'none' },
+      );
+    } catch {
+      return null;
+    }
   }
 
   private async runFallbackTo(endpoint: Endpoint): Promise<void> {

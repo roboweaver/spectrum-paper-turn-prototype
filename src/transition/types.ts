@@ -43,6 +43,11 @@ export interface RendererInput {
   destinationRect: Rect;
   grabbedCorner: Corner;
   texture: HTMLCanvasElement;
+  /**
+   * Capture of the destination page, printed on the sheet's reverse face.
+   * `null` degrades the reverse to blank paper.
+   */
+  backTexture: HTMLCanvasElement | null;
   profile: MotionProfile;
 }
 
@@ -61,6 +66,7 @@ export interface TransitionView {
   prepareDetail(sourceId: string): void;
   measureDestination(): Rect;
   resolveSource(sourceId: string): HTMLElement | null;
+  resolveDestination(): HTMLElement;
   measureSource(source: HTMLElement): Rect;
   setDetailClip(clipPath: string): void;
   setSourceHidden(source: HTMLElement, hidden: boolean): void;
@@ -77,7 +83,11 @@ export interface TransitionView {
 export interface TransitionDependencies {
   profile: MotionProfile;
   selectMotionMode(): MotionMode;
-  capture(source: HTMLElement, profile: MotionProfile): Promise<HTMLCanvasElement>;
+  capture(
+    source: HTMLElement,
+    profile: MotionProfile,
+    styleOverrides?: Partial<CSSStyleDeclaration>,
+  ): Promise<HTMLCanvasElement>;
   createRenderer(input: RendererInput): PaperRenderer;
   runFallback(direction: 'open' | 'close', durationMs: number, signal: AbortSignal): Promise<void>;
   animate(
