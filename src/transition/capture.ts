@@ -93,26 +93,32 @@ type MaybeStyleMapped = HTMLElement & {
  * than on `:root`, so descendants only resolve them by inheritance. html-to-image
  * renders its clone detached inside an SVG `foreignObject`, which inherits
  * nothing — every `var(--spectrum-*)` in the clone silently falls back, giving
- * the texture the wrong padding, greys and text metrics. Inlining the resolved
- * tokens on the capture root restores the whole cascade for the clone.
+ * the texture the wrong padding, greys and text metrics.
+ *
+ * `computedStyleMap().keys()` only enumerates properties **declared** on that
+ * element, not inherited ones, so we must read from the `<sp-theme>` ancestor
+ * (where the tokens are declared) and inline their *computed* values onto the
+ * capture root so the clone's subtree inherits them.
  *
  * Enumerating and serialising the tokens costs a few milliseconds, so the result
- * is cached per element; a page captures at most a handful of distinct roots.
+ * is cached per sp-theme host; a page has at most one or two of them.
  */
 function themeTokenCss(element: HTMLElement): string {
-  const cached = themeTokenCssCache.get(element);
+  // Walk up to the nearest sp-theme element — that's where tokens are declared.
+  const themeHost = (element.closest('sp-theme') as HTMLElement | null) ?? element;
+  const cached = themeTokenCssCache.get(themeHost);
 
   if (cached !== undefined) {
     return cached;
   }
 
-  const styleMap = (element as MaybeStyleMapped).computedStyleMap?.();
+  const styleMap = (themeHost as MaybeStyleMapped).computedStyleMap?.();
   // Without `computedStyleMap` the tokens cannot be enumerated, so the capture
   // proceeds untouched rather than failing outright.
   const declarations: string[] = [];
 
   if (styleMap) {
-    const computed = window.getComputedStyle(element);
+    const computed = window.getComputedStyle(themeHost);
 
     for (const property of styleMap.keys()) {
       if (property.startsWith(THEME_TOKEN_PREFIX)) {
@@ -122,7 +128,7 @@ function themeTokenCss(element: HTMLElement): string {
   }
 
   const css = declarations.join('; ');
-  themeTokenCssCache.set(element, css);
+  themeTokenCssCache.set(themeHost, css);
   return css;
 }
 
