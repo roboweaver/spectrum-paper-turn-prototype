@@ -45,6 +45,28 @@ function flushMicrotasks(): Promise<void> {
   return Promise.resolve().then(() => undefined);
 }
 
+function createAbortableFallbackRunner() {
+  let started!: () => void;
+  const waitUntilStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+
+  const runFallback = vi.fn(
+    async (_direction: 'open' | 'close', _durationMs: number, signal: AbortSignal) =>
+      new Promise<void>((_resolve, reject) => {
+        started();
+        if (signal.aborted) {
+          reject(makeAbortError());
+          return;
+        }
+
+        signal.addEventListener('abort', () => reject(makeAbortError()), { once: true });
+      }),
+  );
+
+  return { runFallback, waitUntilStarted };
+}
+
 function getActiveTransition(coordinator: TransitionCoordinator): ActiveSnapshot | null {
   return (coordinator as unknown as { active: ActiveSnapshot | null }).active;
 }
@@ -880,6 +902,92 @@ describe('TransitionCoordinator', () => {
     expect(coordinator.state).toBe('open');
   });
 
+  it('Escape before the fallback opening midpoint settles idle', async () => {
+    const { coordinator, dependencies, request } = harness({ mode: 'fallback' });
+    const fallback = createAbortableFallbackRunner();
+    let now = 100;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    dependencies.profile = { ...dependencies.profile, fallbackDurationMs: 1000 };
+    dependencies.runFallback = fallback.runFallback;
+
+    const opening = coordinator.open(request);
+    await fallback.waitUntilStarted;
+    now = 499;
+    coordinator.cancel();
+    await opening;
+
+    expect(coordinator.state).toBe('idle');
+    expect(getActiveTransition(coordinator)).toBeNull();
+  });
+
+  it('Escape after the fallback opening midpoint settles open', async () => {
+    const { coordinator, dependencies, request } = harness({ mode: 'fallback' });
+    const fallback = createAbortableFallbackRunner();
+    let now = 100;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    dependencies.profile = { ...dependencies.profile, fallbackDurationMs: 1000 };
+    dependencies.runFallback = fallback.runFallback;
+
+    const opening = coordinator.open(request);
+    await fallback.waitUntilStarted;
+    now = 601;
+    coordinator.cancel();
+    await opening;
+
+    expect(coordinator.state).toBe('open');
+    expect(getActiveTransition(coordinator)).toEqual(
+      expect.objectContaining({
+        progress: 1,
+        requestedEndpoint: 'open',
+      }),
+    );
+  });
+
+  it('Escape before the fallback closing midpoint reopens the detail surface', async () => {
+    const { coordinator, dependencies, request } = harness({ mode: 'fallback' });
+    await coordinator.open(request);
+
+    const fallback = createAbortableFallbackRunner();
+    let now = 100;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    dependencies.profile = { ...dependencies.profile, fallbackDurationMs: 1000 };
+    dependencies.runFallback = fallback.runFallback;
+
+    const closing = coordinator.close();
+    await fallback.waitUntilStarted;
+    now = 499;
+    coordinator.cancel();
+    await closing;
+
+    expect(coordinator.state).toBe('open');
+    expect(getActiveTransition(coordinator)).toEqual(
+      expect.objectContaining({
+        progress: 1,
+        requestedEndpoint: 'open',
+      }),
+    );
+  });
+
+  it('Escape after the fallback closing midpoint settles idle', async () => {
+    const { coordinator, dependencies, request } = harness({ mode: 'fallback' });
+    await coordinator.open(request);
+
+    const fallback = createAbortableFallbackRunner();
+    let now = 100;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    dependencies.profile = { ...dependencies.profile, fallbackDurationMs: 1000 };
+    dependencies.runFallback = fallback.runFallback;
+
+    const closing = coordinator.close();
+    await fallback.waitUntilStarted;
+    now = 601;
+    coordinator.cancel();
+    await closing;
+
+    expect(coordinator.state).toBe('idle');
+    expect(getActiveTransition(coordinator)).toBeNull();
+  });
+
   it('viewport resize preserves the requested endpoint and avoids geometry recompute during fallback', async () => {
     const { coordinator, dependencies, request, view } = harness();
     dependencies.animate = vi.fn(
@@ -899,6 +1007,21 @@ describe('TransitionCoordinator', () => {
     expect(dependencies.runFallback).toHaveBeenCalledWith('open', 200, expect.any(AbortSignal));
     expect(view.measureSource).toHaveBeenCalledTimes(1);
     expect(view.measureDestination).toHaveBeenCalledTimes(1);
+    expect(coordinator.state).toBe('open');
+  });
+
+  it('viewport resize during fallback opening preserves the requested open endpoint', async () => {
+    const { coordinator, dependencies, request } = harness({ mode: 'fallback' });
+    const fallback = createAbortableFallbackRunner();
+    dependencies.profile = { ...dependencies.profile, fallbackDurationMs: 1000 };
+    dependencies.runFallback = fallback.runFallback;
+
+    const opening = coordinator.open(request);
+    await fallback.waitUntilStarted;
+    coordinator.handleViewportChange();
+    await opening;
+
+    expect(dependencies.runFallback).toHaveBeenCalledWith('open', 1000, expect.any(AbortSignal));
     expect(coordinator.state).toBe('open');
   });
 

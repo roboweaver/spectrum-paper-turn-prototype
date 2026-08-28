@@ -4,6 +4,7 @@ type PaperTurnPageWindow = Window & {
   __paperTurn?: {
     profile: {
       durationMs: number;
+      fallbackDurationMs: number;
     };
   };
 };
@@ -70,6 +71,29 @@ async function setDurationMs(page: Page, durationMs: number) {
 
     paperTurnWindow.__paperTurn.profile.durationMs = nextDurationMs;
   }, durationMs);
+}
+
+async function setFallbackDurationMs(page: Page, durationMs: number) {
+  await page.evaluate((nextDurationMs) => {
+    const paperTurnWindow = window as PaperTurnPageWindow;
+    if (!paperTurnWindow.__paperTurn) {
+      throw new Error('Expected window.__paperTurn to be available');
+    }
+
+    paperTurnWindow.__paperTurn.profile.fallbackDurationMs = nextDurationMs;
+  }, durationMs);
+}
+
+async function fallbackAnimationSnapshot(page: Page) {
+  return detailSurface(page).evaluate((element) => {
+    const animation = element.getAnimations()[0] ?? null;
+    return {
+      animationCount: element.getAnimations().length,
+      currentTime: typeof animation?.currentTime === 'number' ? animation.currentTime : Number.NaN,
+      playState: animation?.playState ?? 'idle',
+      opacity: Number(getComputedStyle(element).opacity),
+    };
+  });
 }
 
 test('mouse opening and reverse closing settle on normal Spectrum DOM', async ({ page }) => {
@@ -223,6 +247,69 @@ test('reduced motion and explicit fallback reset the hidden detail clip before r
   await expect(root(page)).toHaveAttribute('data-transition-state', 'open');
   await expect(overlay(page)).toHaveCount(0);
   await expect.poll(() => detailInlineClip(page)).toBe(FULL_CLIP);
+});
+
+test('Escape late in explicit fallback open settles open and late close settles idle', async ({ page }) => {
+  await page.goto('/?fallback=1&duration=2000');
+  await setFallbackDurationMs(page, 2000);
+
+  await cardTrigger(page, 0).click();
+  await expect(detailSurface(page)).toBeVisible();
+  await page.waitForFunction(() => {
+    const detail = document.querySelector<HTMLElement>('[data-detail-surface]');
+    const animation = detail?.getAnimations()[0];
+    const opacity = detail ? Number(getComputedStyle(detail).opacity) : Number.NaN;
+    return Boolean(
+      animation &&
+        animation.playState === 'running' &&
+        typeof animation.currentTime === 'number' &&
+        animation.currentTime > 1200 &&
+        opacity > 0.7 &&
+        opacity < 1,
+    );
+  });
+
+  const openingAnimation = await fallbackAnimationSnapshot(page);
+  expect(openingAnimation.animationCount).toBeGreaterThan(0);
+  expect(openingAnimation.playState).toBe('running');
+  expect(openingAnimation.currentTime).toBeGreaterThan(1200);
+  expect(openingAnimation.opacity).toBeGreaterThan(0.7);
+  expect(openingAnimation.opacity).toBeLessThan(1);
+
+  await page.keyboard.press('Escape');
+
+  await expect(root(page)).toHaveAttribute('data-transition-state', 'open');
+  await expect(detailHeading(page)).toBeFocused();
+  await expect(overlay(page)).toHaveCount(0);
+
+  await closeButton(page).click();
+  await page.waitForFunction(() => {
+    const detail = document.querySelector<HTMLElement>('[data-detail-surface]');
+    const animation = detail?.getAnimations()[0];
+    const opacity = detail ? Number(getComputedStyle(detail).opacity) : Number.NaN;
+    return Boolean(
+      animation &&
+        animation.playState === 'running' &&
+        typeof animation.currentTime === 'number' &&
+        animation.currentTime > 1200 &&
+        opacity > 0 &&
+        opacity < 0.4,
+    );
+  });
+
+  const closingAnimation = await fallbackAnimationSnapshot(page);
+  expect(closingAnimation.animationCount).toBeGreaterThan(0);
+  expect(closingAnimation.playState).toBe('running');
+  expect(closingAnimation.currentTime).toBeGreaterThan(1200);
+  expect(closingAnimation.opacity).toBeGreaterThan(0);
+  expect(closingAnimation.opacity).toBeLessThan(0.4);
+
+  await page.keyboard.press('Escape');
+
+  await expect(root(page)).toHaveAttribute('data-transition-state', 'idle');
+  await expect(cardTrigger(page, 0)).toBeFocused();
+  await expect(detailSurface(page)).toBeHidden();
+  await expect(overlay(page)).toHaveCount(0);
 });
 
 test('chromium mobile keeps mesh density and canvas DPR within bounds', async ({ page }, testInfo) => {
