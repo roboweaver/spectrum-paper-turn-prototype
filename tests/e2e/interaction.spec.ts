@@ -126,11 +126,12 @@ async function waitForFallbackPastMidpoint(page: Page, direction: 'open' | 'clos
 
 async function fullMotionDetailSnapshot(page: Page) {
   return detailSurface(page).evaluate((element) => {
-    const style = getComputedStyle(element);
+    const detailElement = element as HTMLElement;
+    const style = getComputedStyle(detailElement);
     return {
-      animationCount: element.getAnimations().length,
-      hidden: element.hidden,
-      inert: element.inert,
+      animationCount: detailElement.getAnimations().length,
+      hidden: detailElement.hidden,
+      inert: detailElement.inert,
       opacity: Number(style.opacity),
       transform: style.transform,
       visibility: style.visibility,

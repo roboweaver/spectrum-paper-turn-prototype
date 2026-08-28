@@ -40,9 +40,19 @@ export function createFallbackRunner(element: HTMLElement): FallbackRunner {
 
     let aborted = false;
     let animation: Animation | null = null;
+    let cleanedUp = false;
+    const cleanupAnimation = () => {
+      if (cleanedUp || !animation) {
+        return;
+      }
+
+      cleanedUp = true;
+      animation.cancel();
+      animation = null;
+    };
     const onAbort = () => {
       aborted = true;
-      animation?.cancel();
+      cleanupAnimation();
     };
 
     signal.addEventListener('abort', onAbort, { once: true });
@@ -66,6 +76,7 @@ export function createFallbackRunner(element: HTMLElement): FallbackRunner {
 
       throw error;
     } finally {
+      cleanupAnimation();
       signal.removeEventListener('abort', onAbort);
     }
   };

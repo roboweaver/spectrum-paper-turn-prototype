@@ -178,10 +178,13 @@ export class PaperTurnRenderer implements PaperRenderer {
       const overlay = documentRef.createElement('div');
       overlay.className = 'paper-turn-overlay';
       overlay.dataset.meshVertices = String(vertexCount);
+      overlay.setAttribute('aria-hidden', 'true');
+      overlay.setAttribute('role', 'presentation');
       resources.overlay = overlay;
 
       const renderer = new WebGLRenderer({ alpha: true, antialias: false });
       resources.renderer = renderer;
+      renderer.domElement.setAttribute('aria-hidden', 'true');
 
       const devicePixelRatio = resolveDevicePixelRatio(documentRef);
       renderer.setPixelRatio(Math.min(devicePixelRatio, input.profile.maxTextureDpr));
