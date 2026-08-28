@@ -251,10 +251,18 @@ export class TransitionCoordinator extends EventTarget {
   private async runFallbackTo(endpoint: Endpoint): Promise<void> {
     const active = this.requireActive();
     const direction = endpoint === 'open' ? 'open' : 'close';
+    const durationMs = this.normalizeFallbackDuration(this.dependencies.profile.fallbackDurationMs);
 
     this.disposeRenderer();
     if (active.source) {
       this.view.setSourceHidden(active.source, false);
+    }
+
+    if (durationMs <= 0) {
+      this.activeFallbackTiming = null;
+      active.controller = null;
+      this.settleRequestedEndpoint(endpoint);
+      return;
     }
 
     const controller = new AbortController();
@@ -262,7 +270,7 @@ export class TransitionCoordinator extends EventTarget {
     this.activeFallbackTiming = {
       direction,
       startedAt: this.readNow(),
-      durationMs: this.normalizeFallbackDuration(this.dependencies.profile.fallbackDurationMs),
+      durationMs,
     };
 
     if (endpoint === 'open') {
@@ -270,11 +278,7 @@ export class TransitionCoordinator extends EventTarget {
     }
 
     try {
-      await this.dependencies.runFallback(
-        direction,
-        this.dependencies.profile.fallbackDurationMs,
-        controller.signal,
-      );
+      await this.dependencies.runFallback(direction, durationMs, controller.signal);
     } catch (error) {
       if (!isAbortError(error)) {
         console.error('Paper-turn fallback failed; settling to a stable endpoint.', error);
@@ -286,11 +290,7 @@ export class TransitionCoordinator extends EventTarget {
       }
     }
 
-    if ((this.active?.requestedEndpoint ?? endpoint) === 'open') {
-      this.settleOpen();
-    } else {
-      this.settleIdle();
-    }
+    this.settleRequestedEndpoint(endpoint);
   }
 
   private settleOpen(): void {
@@ -460,6 +460,15 @@ export class TransitionCoordinator extends EventTarget {
 
   private normalizeFallbackDuration(durationMs: number): number {
     return Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 0;
+  }
+
+  private settleRequestedEndpoint(endpoint: Endpoint): void {
+    if ((this.active?.requestedEndpoint ?? endpoint) === 'open') {
+      this.settleOpen();
+      return;
+    }
+
+    this.settleIdle();
   }
 
   private readNow(): number {
