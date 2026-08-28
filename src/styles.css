@@ -138,3 +138,43 @@ sp-card { width: 100%; min-height: 330px; }
 @media (prefers-reduced-motion: reduce) {
   .detail-surface { will-change: opacity; }
 }
+
+/* Debug control strip. Only mounted when the demo is loaded with ?debug=1. */
+.paper-turn-debug {
+  position: fixed;
+  z-index: 40;
+  inset-inline: 0;
+  inset-block-end: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  background: rgb(20 20 22 / 92%);
+  color: #f4f4f5;
+  font: 500 12px/1.4 system-ui, sans-serif;
+  pointer-events: auto;
+}
+
+.paper-turn-debug button {
+  min-width: 36px;
+  padding: 5px 12px;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 10%);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.paper-turn-debug button:hover { background: rgb(255 255 255 / 20%); }
+.paper-turn-debug button:focus-visible { outline: 2px solid #7c8cff; outline-offset: 2px; }
+.paper-turn-debug input[type='range'] { width: min(420px, 40vw); accent-color: #7c8cff; }
+
+.paper-turn-debug__readout {
+  min-width: 210px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.paper-turn-debug[data-active='false'] input[type='range'] { opacity: 0.4; }

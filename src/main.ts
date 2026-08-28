@@ -11,6 +11,8 @@ import { DomTransitionView } from './transition/dom-transition-view';
 import { defaultMotionProfile } from './transition/motion-profile';
 import { PaperTurnRenderer } from './transition/paper-turn-renderer';
 import { animateProgress } from './transition/timeline';
+import { createTransitionDebugger } from './debug/transition-debugger';
+import { mountDebugPanel } from './debug/debug-panel';
 import { TransitionCoordinator } from './transition/transition-coordinator';
 import type { Corner, MotionProfile } from './transition/types';
 
@@ -57,6 +59,7 @@ if (!root) {
 
 const searchParams = new URLSearchParams(window.location.search);
 const profile = createMotionProfile(searchParams);
+const transitionDebugger = searchParams.has('debug') ? createTransitionDebugger() : null;
 const app = createDemoApp(root);
 const transitionView = new DomTransitionView({
   list: app.listSurface,
@@ -71,8 +74,12 @@ const coordinator = new TransitionCoordinator(transitionView, {
   capture: captureElement,
   createRenderer: (input) => new PaperTurnRenderer(input),
   runFallback: createFallbackRunner(app.detailSurface),
-  animate: animateProgress,
+  animate: transitionDebugger?.animate ?? animateProgress,
 });
+
+if (transitionDebugger) {
+  mountDebugPanel(transitionDebugger);
+}
 
 root.dataset.transitionState = coordinator.state;
 coordinator.addEventListener('statechange', () => {
