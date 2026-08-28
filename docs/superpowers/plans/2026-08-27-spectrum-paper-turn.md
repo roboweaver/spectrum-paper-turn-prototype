@@ -50,6 +50,13 @@
 
 All later tasks must preserve these names and signatures:
 
+> **Post-implementation amendment (2026-08-28).** The rotating-peel rebuild added two fields to
+> `PaperFrame`: `lift: number` (peak-curl amount, used to gate the contact shadow so it is
+> absent at both endpoints) and `alpha: number` (sheet opacity, cross-dissolving into the
+> revealed page). The interface blocks below are preserved as originally planned; see
+> `src/transition/types.ts` for the shipped shape and `docs/architecture.md` for the rationale.
+> No other locked interface changed.
+
 ```ts
 export type Corner = 'top-left' | 'top-right' | 'bottom-right' | 'bottom-left';
 export type TransitionState = 'idle' | 'preparing' | 'opening' | 'open' | 'closing';
