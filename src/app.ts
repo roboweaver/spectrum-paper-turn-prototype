@@ -25,6 +25,17 @@ function createCardItem(document: Document, card: CardRecord): HTMLLIElement {
   cardElement.setAttribute('subheading', card.subtitle);
   cardElement.setAttribute('size', 's');
 
+  // Slotted headings (rather than attribute-only) keep the text in light DOM so
+  // the transition's html-to-image capture reproduces it; slot fallback content
+  // is dropped during serialisation.
+  const heading = document.createElement('h3');
+  heading.slot = 'heading';
+  heading.textContent = card.title;
+
+  const subheading = document.createElement('div');
+  subheading.slot = 'subheading';
+  subheading.textContent = card.subtitle;
+
   const preview = document.createElement('div');
   preview.slot = 'preview';
   preview.className = 'card-preview';
@@ -33,7 +44,7 @@ function createCardItem(document: Document, card: CardRecord): HTMLLIElement {
   const description = document.createElement('p');
   description.textContent = card.description;
 
-  cardElement.append(preview, description);
+  cardElement.append(preview, heading, subheading, description);
   button.append(cardElement);
   item.append(button);
 

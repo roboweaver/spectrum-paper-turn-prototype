@@ -96,6 +96,8 @@ function harness(options: HarnessOptions = {}) {
       return {
         positions: new Float32Array(),
         shade: new Float32Array(),
+        lift: 0,
+        alpha: 1,
         revealClipPath: `polygon(${progress * 100}% 0%, 100% 100%, 0% 100%)`,
       };
     }),
@@ -589,6 +591,8 @@ describe('TransitionCoordinator', () => {
       return {
         positions: new Float32Array(),
         shade: new Float32Array(),
+        lift: 0,
+        alpha: 1,
         revealClipPath: `polygon(${progress * 100}% 0%, 100% 100%, 0% 100%)`,
       };
     });

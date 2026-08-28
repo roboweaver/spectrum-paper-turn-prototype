@@ -14,7 +14,7 @@ const profile: MotionProfile = {
   durationMs: 720,
   fallbackDurationMs: 200,
   bendDepth: 110,
-  foldSoftness: 0.16,
+  foldSoftness: 0.6,
   edgeCurvature: 18,
   shadowStrength: 0.42,
   meshColumns: 2,
@@ -41,44 +41,125 @@ describe('paper geometry', () => {
     const grabbed = vertexIndex(grabbedCorner, profile.meshColumns, profile.meshRows);
     const start = cornerPoint(source, grabbedCorner);
 
-    expect(Array.from(frame.positions.slice(grabbed * 3, grabbed * 3 + 2))).toEqual([start.x, start.y]);
+    expect(frame.positions[grabbed * 3]).toBeCloseTo(start.x, 6);
+    expect(frame.positions[grabbed * 3 + 1]).toBeCloseTo(start.y, 6);
   });
 
-  it.each(corners)('exchanges diagonal positions for %s', (grabbedCorner) => {
+  it.each(corners)('exchanges diagonal positions within the destination for %s', (grabbedCorner) => {
     const frame = buildPaperFrame(source, destination, grabbedCorner, 1, profile);
     const opposite = oppositeCorner(grabbedCorner);
     const grabbedIndex = vertexIndex(grabbedCorner, profile.meshColumns, profile.meshRows);
     const oppositeIndex = vertexIndex(opposite, profile.meshColumns, profile.meshRows);
     const grabbedEnd = cornerPoint(destination, opposite);
-    const tuckedEnd = cornerPoint(source, grabbedCorner);
+    const tuckedEnd = cornerPoint(destination, grabbedCorner);
 
-    expect(Array.from(frame.positions.slice(grabbedIndex * 3, grabbedIndex * 3 + 2))).toEqual([
-      grabbedEnd.x,
-      grabbedEnd.y,
-    ]);
-    expect(Array.from(frame.positions.slice(oppositeIndex * 3, oppositeIndex * 3 + 2))).toEqual([
-      tuckedEnd.x,
-      tuckedEnd.y,
-    ]);
+    expect(frame.positions[grabbedIndex * 3]).toBeCloseTo(grabbedEnd.x, 6);
+    expect(frame.positions[grabbedIndex * 3 + 1]).toBeCloseTo(grabbedEnd.y, 6);
+    expect(frame.positions[oppositeIndex * 3]).toBeCloseTo(tuckedEnd.x, 6);
+    expect(frame.positions[oppositeIndex * 3 + 1]).toBeCloseTo(tuckedEnd.y, 6);
   });
 
-  it('creates depth at peak curl and no depth at either endpoint', () => {
-    const start = buildPaperFrame(source, destination, 'top-right', 0, profile);
+  it.each(corners)('holds the fold axis corners still for %s', (grabbedCorner) => {
+    const axisCorners = corners.filter(
+      (corner) => corner !== grabbedCorner && corner !== oppositeCorner(grabbedCorner),
+    );
+    const frame = buildPaperFrame(source, destination, grabbedCorner, 1, profile);
+
+    for (const corner of axisCorners) {
+      const index = vertexIndex(corner, profile.meshColumns, profile.meshRows);
+      const expected = cornerPoint(destination, corner);
+
+      expect(frame.positions[index * 3]).toBeCloseTo(expected.x, 6);
+      expect(frame.positions[index * 3 + 1]).toBeCloseTo(expected.y, 6);
+    }
+  });
+
+  it('lifts the grabbed half forward and tucks the opposite half behind at peak curl', () => {
     const peak = buildPaperFrame(source, destination, 'top-right', 0.5, profile);
+    const depths = Array.from(peak.positions.filter((_, index) => index % 3 === 2));
+
+    expect(Math.max(...depths)).toBeGreaterThan(profile.bendDepth * 0.6);
+    expect(Math.min(...depths)).toBeLessThan(-profile.bendDepth * 0.6);
+  });
+
+  it('flattens depth at both endpoints', () => {
+    const start = buildPaperFrame(source, destination, 'top-right', 0, profile);
     const end = buildPaperFrame(source, destination, 'top-right', 1, profile);
 
-    expect(Math.max(...start.positions.filter((_, index) => index % 3 === 2))).toBe(0);
-    expect(Math.max(...peak.positions.filter((_, index) => index % 3 === 2))).toBeGreaterThan(100);
-    expect(Math.max(...end.positions.filter((_, index) => index % 3 === 2))).toBeCloseTo(0, 5);
+    for (const frame of [start, end]) {
+      const depths = Array.from(frame.positions.filter((_, index) => index % 3 === 2));
+
+      expect(Math.max(...depths)).toBeCloseTo(0, 6);
+      expect(Math.min(...depths)).toBeCloseTo(0, 6);
+    }
   });
 
-  it('curves a side edge away from a straight endpoint interpolation', () => {
-    const frame = buildPaperFrame(source, destination, 'top-right', 0.5, profile);
-    const leftY = frame.positions[1]!;
-    const middleY = frame.positions[4]!;
-    const rightY = frame.positions[7]!;
+  it('keeps the mid-turn sheet spread across the viewport instead of collapsing to a line', () => {
+    const peak = buildPaperFrame(source, destination, 'top-right', 0.5, profile);
+    const xs = Array.from(peak.positions.filter((_, index) => index % 3 === 0));
+    const ys = Array.from(peak.positions.filter((_, index) => index % 3 === 1));
 
-    expect(middleY).not.toBeCloseTo((leftY + rightY) / 2, 3);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(destination.width * 0.4);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(destination.height * 0.4);
+  });
+
+  it('grows the sheet from the source rect toward the destination rect', () => {
+    const spans = [0, 0.5, 1].map((progress) => {
+      const frame = buildPaperFrame(source, destination, 'top-right', progress, profile);
+      const xs = Array.from(frame.positions.filter((_, index) => index % 3 === 0));
+
+      return Math.max(...xs) - Math.min(...xs);
+    });
+
+    expect(spans[0]).toBeCloseTo(source.width, 4);
+    expect(spans[1]!).toBeGreaterThan(spans[0]!);
+    expect(spans[2]!).toBeGreaterThan(spans[1]!);
+    expect(spans[2]).toBeCloseTo(destination.width, 4);
+  });
+
+  it('keeps the reveal inside the turning sheet footprint and completes at the end', () => {
+    const start = buildPaperFrame(source, destination, 'top-right', 0, profile);
+    const mid = buildPaperFrame(source, destination, 'top-right', 0.5, profile);
+    const end = buildPaperFrame(source, destination, 'top-right', 1, profile);
+
+    expect(start.revealClipPath).toBe(
+      'polygon(34% 11.428571428571429%, 34% 11.428571428571429%, 34% 11.428571428571429%)',
+    );
+    expect(end.revealClipPath).toBe('polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)');
+
+    // Half-way the sheet only spans the lerped rect, so the reveal must not
+    // wipe past it into parts of the page the sheet has not reached.
+    const points = [...mid.revealClipPath.matchAll(/(-?[\d.]+)% (-?[\d.]+)%/g)].map((match) => ({
+      x: Number(match[1]),
+      y: Number(match[2]),
+    }));
+    const halfRect = {
+      left: (source.left + destination.left) / 2,
+      top: (source.top + destination.top) / 2,
+      width: (source.width + destination.width) / 2,
+      height: (source.height + destination.height) / 2,
+    };
+    const maxX = ((halfRect.left + halfRect.width) / destination.width) * 100;
+    const maxY = ((halfRect.top + halfRect.height) / destination.height) * 100;
+
+    expect(points.length).toBeGreaterThan(2);
+
+    for (const point of points) {
+      expect(point.x).toBeLessThanOrEqual(maxX + 1e-6);
+      expect(point.y).toBeLessThanOrEqual(maxY + 1e-6);
+    }
+  });
+
+  it('holds the sheet opaque until it dissolves into the settled page', () => {
+    expect(buildPaperFrame(source, destination, 'top-right', 0, profile).alpha).toBe(1);
+    expect(buildPaperFrame(source, destination, 'top-right', 0.5, profile).alpha).toBe(1);
+    expect(buildPaperFrame(source, destination, 'top-right', 1, profile).alpha).toBe(0);
+  });
+
+  it('reports zero lift at both endpoints and full lift at peak curl', () => {
+    expect(buildPaperFrame(source, destination, 'top-right', 0, profile).lift).toBeCloseTo(0, 6);
+    expect(buildPaperFrame(source, destination, 'top-right', 0.5, profile).lift).toBeCloseTo(1, 6);
+    expect(buildPaperFrame(source, destination, 'top-right', 1, profile).lift).toBeCloseTo(0, 6);
   });
 
   it('reveals no viewport at zero and the full viewport at one', () => {

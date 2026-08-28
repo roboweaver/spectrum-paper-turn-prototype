@@ -9,6 +9,32 @@ export const cornerUv: Record<Corner, Point> = {
 
 const orderedCornerKeys: readonly Corner[] = ['top-left', 'top-right', 'bottom-right', 'bottom-left'];
 
+/** Depth-driven scale that fakes perspective under the orthographic camera. */
+const PERSPECTIVE_STRENGTH = 0.00042;
+/** Darkest shading applied when the sheet is edge-on to the viewer. */
+const FACING_FLOOR = 0.32;
+/** Eased progress at which the destination page is fully uncovered. */
+const REVEAL_COMPLETE_AT = 0.8;
+/** Eased progress at which the settled sheet starts dissolving into the page. */
+const SHEET_FADE_START = 0.5;
+/**
+ * Fraction of half-width each half keeps at peak curl. A rigid plate would
+ * project to a zero-width line when edge-on; a real sheet stays curved, so the
+ * turn reads as a peel rather than a sliver that vanishes.
+ */
+const ARC_BULGE = 0.34;
+function revealProgress(eased: number): number {
+  return Math.min(1, Math.max(0, eased / REVEAL_COMPLETE_AT));
+}
+
+function sheetAlpha(eased: number): number {
+  if (eased <= SHEET_FADE_START) {
+    return 1;
+  }
+
+  return Math.min(1, Math.max(0, (1 - eased) / (1 - SHEET_FADE_START)));
+}
+
 export function oppositeCorner(corner: Corner): Corner {
   const opposites: Record<Corner, Corner> = {
     'top-left': 'bottom-right',
@@ -91,34 +117,55 @@ function mix(a: number, b: number, progress: number): number {
   return a + (b - a) * progress;
 }
 
-function bilinear(corners: readonly [Point, Point, Point, Point], u: number, v: number): Point {
-  const [topLeft, topRight, bottomRight, bottomLeft] = corners;
-
-  return {
-    x: mix(mix(topLeft.x, topRight.x, u), mix(bottomLeft.x, bottomRight.x, u), v),
-    y: mix(mix(topLeft.y, topRight.y, u), mix(bottomLeft.y, bottomRight.y, u), v),
-  };
-}
-
 function orderedCorners(rect: Rect): [Point, Point, Point, Point] {
   return orderedCornerKeys.map((corner) => cornerPoint(rect, corner)) as [Point, Point, Point, Point];
 }
 
-function endCorners(source: Rect, destination: Rect, grabbed: Corner): [Point, Point, Point, Point] {
-  const result = orderedCorners(destination);
-  const grabbedIndex = orderedCornerKeys.indexOf(grabbed);
-  const opposite = oppositeCorner(grabbed);
-  const oppositeIndex = orderedCornerKeys.indexOf(opposite);
-
-  result[grabbedIndex] = cornerPoint(destination, opposite);
-  result[oppositeIndex] = cornerPoint(source, grabbed);
-
-  return result;
+function lerpRect(source: Rect, destination: Rect, progress: number): Rect {
+  return {
+    left: mix(source.left, destination.left, progress),
+    top: mix(source.top, destination.top, progress),
+    width: mix(source.width, destination.width, progress),
+    height: mix(source.height, destination.height, progress),
+  };
 }
 
-function canonicalDistance(u: number, v: number, grabbed: Corner): number {
+interface FoldBasis {
+  origin: Point;
+  axis: Point;
+  normal: Point;
+  axisLength: number;
+  maxPerp: number;
+}
+
+/**
+ * The sheet turns about the diagonal joining the two corners that stay put,
+ * expressed in normalized card space so a half-turn is an exact reflection.
+ * In pixel space that diagonal is not a symmetry axis unless the rect is
+ * square, so rotating there would leave the corners short of each other.
+ */
+function foldBasis(grabbed: Corner): FoldBasis {
   const grabbedUv = cornerUv[grabbed];
-  return Math.abs(u - grabbedUv.x) + Math.abs(v - grabbedUv.y);
+  const origin = { x: grabbedUv.x, y: 1 - grabbedUv.y };
+  const far = { x: 1 - grabbedUv.x, y: grabbedUv.y };
+  const deltaX = far.x - origin.x;
+  const deltaY = far.y - origin.y;
+  const axisLength = Math.hypot(deltaX, deltaY);
+  const axis = { x: deltaX / axisLength, y: deltaY / axisLength };
+  const toGrabbed = { x: grabbedUv.x - origin.x, y: grabbedUv.y - origin.y };
+  const candidate = { x: -axis.y, y: axis.x };
+  const normal =
+    candidate.x * toGrabbed.x + candidate.y * toGrabbed.y >= 0
+      ? candidate
+      : { x: axis.y, y: -axis.x };
+
+  return {
+    origin,
+    axis,
+    normal,
+    axisLength,
+    maxPerp: normal.x * toGrabbed.x + normal.y * toGrabbed.y,
+  };
 }
 
 function clipViewport(rect: Rect, grabbed: Corner, progress: number): Point[] {
@@ -161,29 +208,36 @@ function percent(value: number): string {
   return `${value}%`;
 }
 
+/**
+ * Builds the destination clip polygon for a sweep across `shape`, expressed in
+ * percentages of `reference`. Keeping the two rects separate lets the reveal
+ * follow the turning sheet's own footprint instead of wiping the whole
+ * viewport before the sheet has swept over it.
+ */
+function clipPathBetween(shape: Rect, reference: Rect, grabbed: Corner, progress: number): string {
+  const toPercent = (point: Point): string => {
+    const x = ((point.x - reference.left) / reference.width) * 100;
+    const y = ((point.y - reference.top) / reference.height) * 100;
+
+    return `${percent(x)} ${percent(y)}`;
+  };
+
+  if (progress <= 0) {
+    const collapsed = toPercent(cornerPoint(shape, grabbed));
+
+    return `polygon(${collapsed}, ${collapsed}, ${collapsed})`;
+  }
+
+  return `polygon(${clipViewport(shape, grabbed, Math.min(1, progress))
+    .map(toPercent)
+    .join(', ')})`;
+}
+
 export function revealClipPath(rect: Rect, grabbed: Corner, progress: number): string {
   validateRect(rect, 'rect');
   validateFiniteNumber(progress, 'progress');
 
-  if (progress <= 0) {
-    const point = cornerPoint(rect, grabbed);
-    const x = ((point.x - rect.left) / rect.width) * 100;
-    const y = ((point.y - rect.top) / rect.height) * 100;
-
-    return `polygon(${percent(x)} ${percent(y)}, ${percent(x)} ${percent(y)}, ${percent(x)} ${percent(y)})`;
-  }
-
-  if (progress >= 1) {
-    return 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)';
-  }
-
-  return `polygon(${clipViewport(rect, grabbed, progress)
-    .map((point) => {
-      const x = ((point.x - rect.left) / rect.width) * 100;
-      const y = ((point.y - rect.top) / rect.height) * 100;
-      return `${percent(x)} ${percent(y)}`;
-    })
-    .join(', ')})`;
+  return clipPathBetween(rect, rect, grabbed, progress);
 }
 
 export function buildPaperFrame(
@@ -198,12 +252,15 @@ export function buildPaperFrame(
   validateProfile(profile);
 
   const eased = easedProgress(progress, profile);
-  const start = orderedCorners(source);
-  const end = endCorners(source, destination, grabbed);
+  const baseRect = lerpRect(source, destination, eased);
+  const basis = foldBasis(grabbed);
   const vertexCount = (profile.meshColumns + 1) * (profile.meshRows + 1);
   const positions = new Float32Array(vertexCount * 3);
   const shade = new Float32Array(vertexCount);
-  const curl = eased <= 0 || eased >= 1 ? 0 : Math.sin(Math.PI * eased);
+  const turn = Math.PI * eased;
+  const lift = Math.sin(turn);
+  const centerX = baseRect.left + baseRect.width / 2;
+  const centerY = baseRect.top + baseRect.height / 2;
 
   for (let row = 0; row <= profile.meshRows; row += 1) {
     const v = row / profile.meshRows;
@@ -211,32 +268,42 @@ export function buildPaperFrame(
     for (let column = 0; column <= profile.meshColumns; column += 1) {
       const u = column / profile.meshColumns;
       const index = row * (profile.meshColumns + 1) + column;
-      const from = bilinear(start, u, v);
-      const to = bilinear(end, u, v);
-      const distance = canonicalDistance(u, v, grabbed);
-      const foldDistance = Math.abs(distance - eased * 2);
-      const foldInfluence = Math.exp(-(foldDistance * foldDistance) / profile.foldSoftness);
-      const edgeWave = Math.sin(Math.PI * u) * Math.sin(Math.PI * v);
-      const edgeDistance = Math.min(u, 1 - u, v, 1 - v);
-      const edgeInfluence = 1 - Math.min(1, edgeDistance * 4);
-      const edgeBend = Math.sin(Math.PI * (u + v)) * edgeInfluence * profile.edgeCurvature * curl;
-      const grabbedUv = cornerUv[grabbed];
+      const offsetX = u - basis.origin.x;
+      const offsetY = v - basis.origin.y;
+      const along = offsetX * basis.axis.x + offsetY * basis.axis.y;
+      const perp = offsetX * basis.normal.x + offsetY * basis.normal.y;
+      const acrossFold = perp / basis.maxPerp;
 
-      positions[index * 3] =
-        mix(from.x, to.x, eased) + edgeBend * (grabbedUv.x === 0 ? 0.45 : -0.45);
-      positions[index * 3 + 1] =
-        mix(from.y, to.y, eased) +
-        edgeWave * profile.edgeCurvature * curl +
-        edgeBend * (grabbedUv.y === 0 ? 1 : -1);
-      positions[index * 3 + 2] =
-        curl * (profile.bendDepth * foldInfluence + profile.edgeCurvature * edgeWave);
-      shade[index] = Math.min(1, 0.35 + foldInfluence * 0.65);
+      // The grabbed half leads the tucked half, so the sheet stays curved
+      // through the turn instead of collapsing edge-on all at once.
+      const localTurn = turn + profile.foldSoftness * lift * acrossFold;
+      const localCos = Math.cos(localTurn);
+      const localSin = Math.sin(localTurn);
+      const ridge = Math.sin(Math.PI * clampUnitInterval(along / basis.axisLength));
+      // Smooth across the fold: a sign() step here would tear the mesh into
+      // visible stair steps where triangles straddle the axis.
+      const bulge =
+        basis.maxPerp * ARC_BULGE * lift * ridge * Math.sin((Math.PI / 2) * acrossFold);
+      const turnedPerp = perp * localCos + bulge;
+      const turnedU = basis.origin.x + along * basis.axis.x + turnedPerp * basis.normal.x;
+      const turnedV = basis.origin.y + along * basis.axis.y + turnedPerp * basis.normal.y;
+      const depth = acrossFold * localSin * profile.bendDepth + profile.edgeCurvature * localSin * ridge;
+      const scale = 1 + depth * PERSPECTIVE_STRENGTH;
+      const flatX = baseRect.left + turnedU * baseRect.width;
+      const flatY = baseRect.top + turnedV * baseRect.height;
+
+      positions[index * 3] = centerX + (flatX - centerX) * scale;
+      positions[index * 3 + 1] = centerY + (flatY - centerY) * scale;
+      positions[index * 3 + 2] = depth;
+      shade[index] = clampUnitInterval(FACING_FLOOR + (1 - FACING_FLOOR) * Math.abs(localCos));
     }
   }
 
   return {
     positions,
     shade,
-    revealClipPath: revealClipPath(destination, grabbed, eased),
+    lift,
+    alpha: sheetAlpha(eased),
+    revealClipPath: clipPathBetween(baseRect, destination, grabbed, revealProgress(eased)),
   };
 }

@@ -31,6 +31,10 @@ export interface MotionProfile {
 export interface PaperFrame {
   positions: Float32Array;
   shade: Float32Array;
+  /** Sine of the turn angle: 0 at both endpoints, 1 at peak curl. */
+  lift: number;
+  /** Sheet opacity, ramped to 0 as the turn settles onto the page. */
+  alpha: number;
   revealClipPath: string;
 }
 

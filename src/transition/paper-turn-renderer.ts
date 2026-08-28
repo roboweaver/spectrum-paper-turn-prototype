@@ -16,6 +16,9 @@ import { buildPaperFrame } from './geometry';
 import { paperTurnFragmentShader, paperTurnVertexShader } from './paper-shaders';
 import type { PaperFrame, PaperRenderer, Rect, RendererInput } from './types';
 
+/** Peak fraction of shadowStrength applied to the contact shadow at full curl. */
+const SHADOW_LIFT_SCALE = 0.4;
+
 function validateFiniteNumber(value: number, field: string): void {
   if (!Number.isFinite(value)) {
     throw new Error(`Invalid ${field}: expected a finite number.`);
@@ -216,12 +219,16 @@ export class PaperTurnRenderer implements PaperRenderer {
 
       const texture = new CanvasTexture(input.texture);
       texture.colorSpace = SRGBColorSpace;
+      // The mesh uses screen-space y (row 0 at the top), so the default
+      // bottom-up sampling would render the captured card upside down.
+      texture.flipY = false;
       resources.texture = texture;
 
       const paperMaterial = new ShaderMaterial({
         uniforms: {
           paperTexture: { value: texture },
           shadowStrength: { value: input.profile.shadowStrength },
+          sheetAlpha: { value: 1 },
         },
         vertexShader: paperTurnVertexShader,
         fragmentShader: paperTurnFragmentShader,
@@ -236,7 +243,7 @@ export class PaperTurnRenderer implements PaperRenderer {
 
       const shadowMaterial = new MeshBasicMaterial({
         color: 0x000000,
-        opacity: input.profile.shadowStrength,
+        opacity: 0,
         transparent: true,
         side: DoubleSide,
         depthWrite: false,
@@ -289,6 +296,10 @@ export class PaperTurnRenderer implements PaperRenderer {
     this.shade.set(frame.shade);
     this.positionAttribute.needsUpdate = true;
     this.shadeAttribute.needsUpdate = true;
+    this.paperMaterial.uniforms.sheetAlpha!.value = frame.alpha;
+    // Gate the contact shadow on lift so a settled sheet never tints the page.
+    this.shadowMaterial.opacity =
+      this.input.profile.shadowStrength * SHADOW_LIFT_SCALE * frame.lift * frame.alpha;
     this.overlay.dataset.progress = progress.toFixed(3);
     this.renderer.render(this.scene, this.camera);
 

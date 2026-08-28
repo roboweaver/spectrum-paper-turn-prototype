@@ -8,8 +8,8 @@ function easeInOutCubic(progress: number): number {
 export const defaultMotionProfile = Object.freeze({
   durationMs: 720,
   fallbackDurationMs: 200,
-  bendDepth: 120,
-  foldSoftness: 0.14,
+  bendDepth: 150,
+  foldSoftness: 0.62,
   edgeCurvature: 20,
   shadowStrength: 0.42,
   meshColumns: 20,

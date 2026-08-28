@@ -329,8 +329,9 @@ describe('paper shaders', () => {
 
     expect(paperTurnFragmentShader).toContain('uniform sampler2D paperTexture;');
     expect(paperTurnFragmentShader).toContain('uniform float shadowStrength;');
+    expect(paperTurnFragmentShader).toContain('uniform float sheetAlpha;');
     expect(normalizedShader).toContain(
-      'vec3 reverse = mix(vec3(0.86, 0.87, 0.89), front.rgb, 0.2); float highlight = 0.78 + vShade * 0.32; vec3 face = gl_FrontFacing ? front.rgb : reverse; float reverseShadow = gl_FrontFacing ? 0.0 : shadowStrength * 0.35; gl_FragColor = vec4(face * highlight * (1.0 - reverseShadow), front.a); #include <colorspace_fragment>',
+      'vec3 reverse = mix(vec3(0.94, 0.93, 0.91), front.rgb, 0.12); float highlight = 0.68 + vShade * 0.32; vec3 face = gl_FrontFacing ? front.rgb : reverse; float reverseShadow = gl_FrontFacing ? 0.0 : shadowStrength * 0.30; gl_FragColor = vec4(face * highlight * (1.0 - reverseShadow), front.a * sheetAlpha); #include <colorspace_fragment>',
     );
     expect(normalizedShader).not.toContain('reverseBase');
     expect(normalizedShader).not.toContain('reverse = reverseBase * highlight;');
@@ -413,11 +414,46 @@ describe('PaperTurnRenderer', () => {
     });
     expect(threeMock.materials[1]).toMatchObject({
       color: 0x000000,
-      opacity: input.profile.shadowStrength,
       transparent: true,
       side: 'DoubleSide',
       depthWrite: false,
     });
+  });
+
+  it('gates the contact shadow so a settled sheet never tints the page', () => {
+    const input = createInput();
+    const renderer = new PaperTurnRenderer(input);
+    const shadowMaterial = threeMock.materials[1] as unknown as { opacity: number };
+
+    expect(shadowMaterial.opacity).toBe(0);
+
+    renderer.render(0);
+    expect(shadowMaterial.opacity).toBeCloseTo(0, 6);
+
+    renderer.render(0.5);
+    expect(shadowMaterial.opacity).toBeGreaterThan(0);
+    expect(shadowMaterial.opacity).toBeLessThan(input.profile.shadowStrength);
+
+    renderer.render(1);
+    expect(shadowMaterial.opacity).toBeCloseTo(0, 6);
+
+    renderer.dispose();
+  });
+
+  it('fades the sheet out as it settles onto the revealed page', () => {
+    const input = createInput();
+    const renderer = new PaperTurnRenderer(input);
+    const paperMaterial = threeMock.materials[0] as unknown as {
+      uniforms: { sheetAlpha: { value: number } };
+    };
+
+    expect(renderer.render(0).alpha).toBe(1);
+    expect(paperMaterial.uniforms.sheetAlpha.value).toBe(1);
+
+    expect(renderer.render(1).alpha).toBe(0);
+    expect(paperMaterial.uniforms.sheetAlpha.value).toBe(0);
+
+    renderer.dispose();
   });
 
   it('uses the provided document window device pixel ratio instead of the global window', () => {

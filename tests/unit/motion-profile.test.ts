@@ -16,8 +16,8 @@ describe('defaultMotionProfile', () => {
     expect(defaultMotionProfile.fallbackDurationMs).toBe(200);
     expect(defaultMotionProfile.fallbackDurationMs).toBeGreaterThanOrEqual(180);
     expect(defaultMotionProfile.fallbackDurationMs).toBeLessThanOrEqual(220);
-    expect(defaultMotionProfile.bendDepth).toBe(120);
-    expect(defaultMotionProfile.foldSoftness).toBe(0.14);
+    expect(defaultMotionProfile.bendDepth).toBe(150);
+    expect(defaultMotionProfile.foldSoftness).toBe(0.62);
     expect(defaultMotionProfile.edgeCurvature).toBe(20);
     expect(defaultMotionProfile.shadowStrength).toBe(0.42);
     expect(defaultMotionProfile.meshColumns).toBe(20);
