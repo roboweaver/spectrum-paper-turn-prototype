@@ -119,37 +119,23 @@ describe('paper geometry', () => {
     expect(spans[2]).toBeCloseTo(destination.width, 4);
   });
 
-  it('keeps the reveal inside the turning sheet footprint and completes at the end', () => {
-    const start = buildPaperFrame(source, destination, 'top-right', 0, profile);
-    const mid = buildPaperFrame(source, destination, 'top-right', 0.5, profile);
-    const end = buildPaperFrame(source, destination, 'top-right', 1, profile);
+  it('keeps the destination hidden until the sheet has finished covering it', () => {
+    // The sheet already carries the destination page on its reverse face, so
+    // uncovering the live DOM mid-turn drew a flat rectangle that was not part
+    // of the fold and hid the card list behind it. The page stays clipped to a
+    // degenerate point until the sheet lands, where its geometry matches the
+    // destination rect and the handoff to real DOM is invisible.
+    for (const progress of [0, 0.25, 0.5, 0.75, 0.99]) {
+      const clip = buildPaperFrame(source, destination, 'top-right', progress, profile).revealClipPath;
+      const points = [...clip.matchAll(/(-?[\d.]+)% (-?[\d.]+)%/g)].map((match) => `${match[1]},${match[2]}`);
 
-    expect(start.revealClipPath).toBe(
-      'polygon(34% 11.428571428571429%, 34% 11.428571428571429%, 34% 11.428571428571429%)',
-    );
-    expect(end.revealClipPath).toBe('polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)');
-
-    // Half-way the sheet only spans the lerped rect, so the reveal must not
-    // wipe past it into parts of the page the sheet has not reached.
-    const points = [...mid.revealClipPath.matchAll(/(-?[\d.]+)% (-?[\d.]+)%/g)].map((match) => ({
-      x: Number(match[1]),
-      y: Number(match[2]),
-    }));
-    const halfRect = {
-      left: (source.left + destination.left) / 2,
-      top: (source.top + destination.top) / 2,
-      width: (source.width + destination.width) / 2,
-      height: (source.height + destination.height) / 2,
-    };
-    const maxX = ((halfRect.left + halfRect.width) / destination.width) * 100;
-    const maxY = ((halfRect.top + halfRect.height) / destination.height) * 100;
-
-    expect(points.length).toBeGreaterThan(2);
-
-    for (const point of points) {
-      expect(point.x).toBeLessThanOrEqual(maxX + 1e-6);
-      expect(point.y).toBeLessThanOrEqual(maxY + 1e-6);
+      expect(points.length).toBeGreaterThan(2);
+      expect(new Set(points).size).toBe(1);
     }
+
+    expect(buildPaperFrame(source, destination, 'top-right', 1, profile).revealClipPath).toBe(
+      'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)',
+    );
   });
 
   it('keeps the sheet fully opaque for the whole turn', () => {

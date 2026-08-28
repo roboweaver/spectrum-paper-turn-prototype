@@ -90,6 +90,8 @@ sp-card { width: 100%; min-height: 330px; }
   min-height: 100vh;
   padding: clamp(24px, 5vw, 72px);
   overflow: auto;
+  display: flex;
+  flex-direction: column;
   background:
     linear-gradient(145deg, color-mix(in srgb, var(--detail-color), white 88%), white 72%),
     white;
@@ -97,8 +99,46 @@ sp-card { width: 100%; min-height: 330px; }
   will-change: clip-path, opacity, transform;
 }
 
+/* `display: flex` above outranks the UA `[hidden] { display: none }` rule, so
+   the hidden surface has to be re-hidden explicitly. */
+.detail-surface[hidden] { display: none; }
+
 .detail-toolbar { display: flex; justify-content: flex-end; }
-.detail-content { max-width: 900px; margin-top: clamp(64px, 12vh, 160px); }
+.detail-content {
+  max-width: 900px;
+  margin-top: clamp(40px, 8vh, 96px);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 8px 32px;
+  margin-top: clamp(24px, 4vh, 48px);
+}
+
+.detail-body h3 {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+}
+
+.detail-body p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+/* Pinned to the bottom of the page so the sheet's trailing edge stays
+   identifiable while it turns. */
+.detail-footer {
+  margin: auto 0 0;
+  padding-top: 24px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 .detail-content h2:focus {
   outline: 3px solid #1473e6;
   outline-offset: 6px;

@@ -71,6 +71,8 @@ export function createDemoApp(root: HTMLElement): DemoApp {
             <p class="eyebrow" data-detail-subtitle></p>
             <h2 data-detail-heading tabindex="-1"></h2>
             <p data-detail-description></p>
+            <div class="detail-body" data-detail-body></div>
+            <p class="detail-footer" data-detail-footer></p>
           </div>
         </article>
       </main>
@@ -84,8 +86,20 @@ export function createDemoApp(root: HTMLElement): DemoApp {
   const closeButton = root.querySelector<HTMLElement>('[data-close-button]');
   const detailSubtitle = root.querySelector<HTMLElement>('[data-detail-subtitle]');
   const detailDescription = root.querySelector<HTMLElement>('[data-detail-description]');
+  const detailBody = root.querySelector<HTMLElement>('[data-detail-body]');
+  const detailFooter = root.querySelector<HTMLElement>('[data-detail-footer]');
 
-  if (!listSurface || !detailSurface || !detailHeading || !listFocusFallback || !closeButton || !detailSubtitle || !detailDescription) {
+  if (
+    !listSurface ||
+    !detailSurface ||
+    !detailHeading ||
+    !listFocusFallback ||
+    !closeButton ||
+    !detailSubtitle ||
+    !detailDescription ||
+    !detailBody ||
+    !detailFooter
+  ) {
     throw new Error('Demo DOM contract is incomplete');
   }
 
@@ -107,6 +121,18 @@ export function createDemoApp(root: HTMLElement): DemoApp {
       detailHeading.textContent = card.title;
       detailSubtitle.textContent = card.subtitle;
       detailDescription.textContent = card.description;
+      detailFooter.textContent = card.footer;
+      detailBody.replaceChildren(
+        ...card.sections.map((section) => {
+          const wrapper = document.createElement('section');
+          const heading = document.createElement('h3');
+          heading.textContent = section.heading;
+          const body = document.createElement('p');
+          body.textContent = section.body;
+          wrapper.append(heading, body);
+          return wrapper;
+        }),
+      );
       detailSurface.style.setProperty('--detail-color', card.color);
     },
     resolveSource(sourceId: string) {

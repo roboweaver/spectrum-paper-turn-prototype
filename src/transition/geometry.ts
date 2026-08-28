@@ -13,16 +13,21 @@ const orderedCornerKeys: readonly Corner[] = ['top-left', 'top-right', 'bottom-r
 const PERSPECTIVE_STRENGTH = 0.00042;
 /** Darkest shading applied when the sheet is edge-on to the viewer. */
 const FACING_FLOOR = 0.32;
-/** Eased progress at which the destination page is fully uncovered. */
-const REVEAL_COMPLETE_AT = 0.92;
 /**
  * Fraction of half-width each half keeps at peak curl. A rigid plate would
  * project to a zero-width line when edge-on; a real sheet stays curved, so the
  * turn reads as a peel rather than a sliver that vanishes.
  */
 const ARC_BULGE = 0.34;
+/**
+ * The sheet already prints the destination page on its reverse face, so
+ * uncovering the live DOM part-way through drew a second, flat copy of the page
+ * that was not part of the fold and hid the card list behind it. The page stays
+ * shut until the sheet lands, where the sheet's geometry matches the
+ * destination rect exactly and the swap to real DOM is invisible.
+ */
 function revealProgress(eased: number): number {
-  return Math.min(1, Math.max(0, eased / REVEAL_COMPLETE_AT));
+  return eased >= 1 ? 1 : 0;
 }
 
 export function oppositeCorner(corner: Corner): Corner {
