@@ -322,20 +322,25 @@ export class TransitionCoordinator extends EventTarget {
   private settleOpen(): void {
     const active = this.requireActive();
 
-    this.disposeRenderer();
-    if (active.source) {
-      this.view.setSourceHidden(active.source, false);
-    }
-
-    active.controller = null;
-    active.interruption = null;
-    active.progress = 1;
-    this.activeFallbackTiming = null;
+    // Swap the DOM to its final state while the overlay canvas is still on top
+    // (z-index 30 covers everything beneath it), so the user never sees the
+    // intermediate frame where the list-surface gradient is visible.  Only then
+    // remove the overlay so the live DOM is already correct on first paint.
     this.view.setBusy(false);
     this.view.setDetailClip(FULL_CLIP);
     this.view.setListVisible(false);
     this.view.setDetailVisible(true);
     this.view.setDetailInert(false);
+    if (active.source) {
+      this.view.setSourceHidden(active.source, false);
+    }
+
+    this.disposeRenderer();
+
+    active.controller = null;
+    active.interruption = null;
+    active.progress = 1;
+    this.activeFallbackTiming = null;
     this.setState('open');
     this.view.focusDetailHeading();
   }
@@ -345,18 +350,9 @@ export class TransitionCoordinator extends EventTarget {
     const trigger = request?.trigger ?? null;
     const source = this.active?.source ?? null;
 
-    this.disposeRenderer();
-    if (source) {
-      this.view.setSourceHidden(source, false);
-    }
-
-    if (this.active) {
-      this.active.controller = null;
-      this.active.interruption = null;
-      this.active.progress = 0;
-    }
-    this.activeFallbackTiming = null;
-
+    // Set the DOM to its final idle state while the overlay is still covering
+    // everything, then remove the overlay so the list surface is already correct
+    // on first paint (no pop from detail → list background colour).
     this.view.setBusy(false);
     this.view.setDetailInert(true);
     if (request) {
@@ -364,6 +360,18 @@ export class TransitionCoordinator extends EventTarget {
     }
     this.view.setDetailVisible(false);
     this.view.setListVisible(true);
+    if (source) {
+      this.view.setSourceHidden(source, false);
+    }
+
+    this.disposeRenderer();
+
+    if (this.active) {
+      this.active.controller = null;
+      this.active.interruption = null;
+      this.active.progress = 0;
+    }
+    this.activeFallbackTiming = null;
     this.view.restoreScroll();
     this.active = null;
     this.setState('idle');

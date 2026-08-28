@@ -108,7 +108,11 @@ function themeTokenCss(element: HTMLElement): string {
   const themeHost = (element.closest('sp-theme') as HTMLElement | null) ?? element;
   const cached = themeTokenCssCache.get(themeHost);
 
-  if (cached !== undefined) {
+  // Only use a cached result if it's non-empty. An empty cache entry means the
+  // tokens weren't loaded yet when the cache was first populated (Spectrum Web
+  // Components upgrade their custom element and apply tokens asynchronously),
+  // so we re-enumerate on every call until we get a non-empty result.
+  if (cached) {
     return cached;
   }
 
@@ -128,7 +132,10 @@ function themeTokenCss(element: HTMLElement): string {
   }
 
   const css = declarations.join('; ');
-  themeTokenCssCache.set(themeHost, css);
+  // Only cache non-empty results so we retry if tokens are not yet loaded.
+  if (css) {
+    themeTokenCssCache.set(themeHost, css);
+  }
   return css;
 }
 
