@@ -3,31 +3,64 @@ import { createFallbackRunner } from '../../src/transition/fallback-transition';
 
 type FakeAnimation = Pick<Animation, 'cancel' | 'finished'>;
 
-function createAnimatedElement(animation: FakeAnimation): {
+function createDeferred<T>() {
+  let resolve: ((value: T | PromiseLike<T>) => void) | undefined;
+  let reject: ((reason?: unknown) => void) | undefined;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+
+  return {
+    promise,
+    resolve: (value: T | PromiseLike<T>) => resolve?.(value),
+    reject: (reason?: unknown) => reject?.(reason),
+  };
+}
+
+function createAnimatedElement(options: {
+  finished?: Promise<Animation>;
+  onCancel?: () => void;
+} = {}): {
   element: HTMLElement;
   animate: ReturnType<typeof vi.fn>;
+  animation: FakeAnimation;
 } {
   const element = document.createElement('div');
-  const animate = vi.fn(() => animation as Animation);
+  let attachedAnimation: Animation | null = null;
+  const animation = {
+    cancel: vi.fn(() => {
+      attachedAnimation = null;
+      options.onCancel?.();
+    }),
+    finished: options.finished ?? Promise.resolve({} as Animation),
+  } satisfies FakeAnimation;
+  const animationHandle = animation as unknown as Animation;
+  const animate = vi.fn(() => {
+    attachedAnimation = animationHandle;
+    return animationHandle;
+  });
   Object.defineProperty(element, 'animate', {
     value: animate,
     configurable: true,
   });
+  Object.defineProperty(element, 'getAnimations', {
+    value: vi.fn(() => (attachedAnimation ? [attachedAnimation] : [])),
+    configurable: true,
+  });
 
-  return { element, animate };
+  return { element, animate, animation };
 }
 
 describe('createFallbackRunner', () => {
   it('runs the open fallback animation with the exact keyframes and options', async () => {
-    const finished = Promise.resolve({} as Animation);
-    const animation = {
-      cancel: vi.fn(),
-      finished,
-    } satisfies FakeAnimation;
-    const { element, animate } = createAnimatedElement(animation);
+    const finished = createDeferred<Animation>();
+    const { element, animate, animation } = createAnimatedElement({
+      finished: finished.promise,
+    });
     const runner = createFallbackRunner(element);
 
-    await expect(runner('open', 200, new AbortController().signal)).resolves.toBeUndefined();
+    const promise = runner('open', 200, new AbortController().signal);
 
     expect(animate).toHaveBeenCalledWith(
       {
@@ -40,19 +73,21 @@ describe('createFallbackRunner', () => {
         fill: 'both',
       },
     );
+    expect(element.getAnimations()).toEqual([animation as Animation]);
+    finished.resolve({} as Animation);
+    await expect(promise).resolves.toBeUndefined();
     expect(animation.cancel).toHaveBeenCalledTimes(1);
+    expect(element.getAnimations()).toHaveLength(0);
   });
 
   it('runs the close fallback animation with the exact keyframes and options', async () => {
-    const finished = Promise.resolve({} as Animation);
-    const animation = {
-      cancel: vi.fn(),
-      finished,
-    } satisfies FakeAnimation;
-    const { element, animate } = createAnimatedElement(animation);
+    const finished = createDeferred<Animation>();
+    const { element, animate, animation } = createAnimatedElement({
+      finished: finished.promise,
+    });
     const runner = createFallbackRunner(element);
 
-    await runner('close', 180, new AbortController().signal);
+    const promise = runner('close', 180, new AbortController().signal);
 
     expect(animate).toHaveBeenCalledWith(
       {
@@ -65,16 +100,15 @@ describe('createFallbackRunner', () => {
         fill: 'both',
       },
     );
+    expect(element.getAnimations()).toEqual([animation as Animation]);
+    finished.resolve({} as Animation);
+    await expect(promise).resolves.toBeUndefined();
     expect(animation.cancel).toHaveBeenCalledTimes(1);
+    expect(element.getAnimations()).toHaveLength(0);
   });
 
   it('rejects invalid durations before animating', async () => {
-    const finished = Promise.resolve({} as Animation);
-    const animation = {
-      cancel: vi.fn(),
-      finished,
-    } satisfies FakeAnimation;
-    const { element, animate } = createAnimatedElement(animation);
+    const { element, animate } = createAnimatedElement();
     const runner = createFallbackRunner(element);
 
     await expect(runner('open', 0, new AbortController().signal)).rejects.toThrow(/duration/i);
@@ -83,12 +117,7 @@ describe('createFallbackRunner', () => {
   });
 
   it('rejects an already-aborted signal before starting the animation', async () => {
-    const finished = Promise.resolve({} as Animation);
-    const animation = {
-      cancel: vi.fn(),
-      finished,
-    } satisfies FakeAnimation;
-    const { element, animate } = createAnimatedElement(animation);
+    const { element, animate } = createAnimatedElement();
     const controller = new AbortController();
     controller.abort();
     const runner = createFallbackRunner(element);
@@ -97,27 +126,26 @@ describe('createFallbackRunner', () => {
     expect(animate).not.toHaveBeenCalled();
   });
 
-  it('cancels on abort, rejects with AbortError, and removes the abort listener', async () => {
-    let rejectFinished: ((reason?: unknown) => void) | undefined;
-    const animation = {
-      cancel: vi.fn(() => {
-        rejectFinished?.(new DOMException('The operation was aborted.', 'AbortError'));
-      }),
-      finished: new Promise<never>((_, reject) => {
-        rejectFinished = reject;
-      }),
-    } satisfies FakeAnimation;
-    const { element } = createAnimatedElement(animation);
+  it('cancels exactly once when abort wins after animate returns and detaches the animation', async () => {
+    const finished = createDeferred<Animation>();
+    const { element, animation } = createAnimatedElement({
+      finished: finished.promise,
+      onCancel: () => {
+        finished.reject(new DOMException('The operation was aborted.', 'AbortError'));
+      },
+    });
     const controller = new AbortController();
     const addEventListener = vi.spyOn(controller.signal, 'addEventListener');
     const removeEventListener = vi.spyOn(controller.signal, 'removeEventListener');
     const runner = createFallbackRunner(element);
 
     const promise = runner('open', 200, controller.signal);
+    expect(element.getAnimations()).toEqual([animation as Animation]);
     controller.abort();
 
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
     expect(animation.cancel).toHaveBeenCalledTimes(1);
+    expect(element.getAnimations()).toHaveLength(0);
     expect(addEventListener).toHaveBeenCalledWith('abort', expect.any(Function), { once: true });
     expect(removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function));
   });
@@ -125,12 +153,7 @@ describe('createFallbackRunner', () => {
   it('removes the abort listener after a successful animation', async () => {
     const controller = new AbortController();
     const removeEventListener = vi.spyOn(controller.signal, 'removeEventListener');
-    const finished = Promise.resolve({} as Animation);
-    const animation = {
-      cancel: vi.fn(),
-      finished,
-    } satisfies FakeAnimation;
-    const { element } = createAnimatedElement(animation);
+    const { element } = createAnimatedElement();
     const runner = createFallbackRunner(element);
 
     await runner('open', 200, controller.signal);
@@ -141,16 +164,20 @@ describe('createFallbackRunner', () => {
   it('propagates non-abort animation failures unchanged and removes the listener', async () => {
     const controller = new AbortController();
     const removeEventListener = vi.spyOn(controller.signal, 'removeEventListener');
+    const finished = createDeferred<Animation>();
     const failure = new Error('animation failed');
-    const animation = {
-      cancel: vi.fn(),
-      finished: Promise.reject(failure),
-    } satisfies FakeAnimation;
-    const { element } = createAnimatedElement(animation);
+    const { element, animation } = createAnimatedElement({
+      finished: finished.promise,
+    });
     const runner = createFallbackRunner(element);
 
-    await expect(runner('close', 200, controller.signal)).rejects.toBe(failure);
+    const promise = runner('close', 200, controller.signal);
+    expect(element.getAnimations()).toEqual([animation as Animation]);
+    finished.reject(failure);
+
+    await expect(promise).rejects.toBe(failure);
     expect(animation.cancel).toHaveBeenCalledTimes(1);
+    expect(element.getAnimations()).toHaveLength(0);
     expect(removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function));
   });
 });

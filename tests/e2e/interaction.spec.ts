@@ -87,11 +87,15 @@ async function setFallbackDurationMs(page: Page, durationMs: number) {
 async function fallbackAnimationSnapshot(page: Page) {
   return detailSurface(page).evaluate((element) => {
     const animation = element.getAnimations()[0] ?? null;
+    const effect = animation?.effect;
+    const duration = effect ? Number(effect.getTiming().duration) : Number.NaN;
     return {
       animationCount: element.getAnimations().length,
       currentTime: typeof animation?.currentTime === 'number' ? animation.currentTime : Number.NaN,
       progress:
-        typeof animation?.currentTime === 'number' ? Number(animation.currentTime) / 10_000 : Number.NaN,
+        typeof animation?.currentTime === 'number' && Number.isFinite(duration) && duration > 0
+          ? Number(animation.currentTime) / duration
+          : Number.NaN,
       playState: animation?.playState ?? 'idle',
       opacity: Number(getComputedStyle(element).opacity),
     };
@@ -104,9 +108,11 @@ async function waitForFallbackPastMidpoint(page: Page, direction: 'open' | 'clos
       const detail = document.querySelector<HTMLElement>('[data-detail-surface]');
       const animation = detail?.getAnimations()[0];
       const opacity = detail ? Number(getComputedStyle(detail).opacity) : Number.NaN;
+      const effect = animation?.effect;
+      const duration = effect ? Number(effect.getTiming().duration) : Number.NaN;
       const progress =
-        animation && typeof animation.currentTime === 'number'
-          ? Number(animation.currentTime) / 10_000
+        animation && typeof animation.currentTime === 'number' && Number.isFinite(duration) && duration > 0
+          ? Number(animation.currentTime) / duration
           : Number.NaN;
 
       if (!animation || animation.playState !== 'running' || !Number.isFinite(progress)) {
@@ -352,11 +358,35 @@ test('mixed fallback close cleanup does not poison the next full-motion reopen',
   await openCardAndExpectHeading(page, 0, 'Spectrum foundations');
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  await setFallbackDurationMs(page, 3_000);
   await closeButton(page).click();
-  await expect(cardTrigger(page, 0)).toBeFocused();
-  await expect(detailSurface(page)).toBeHidden();
-  await expect(root(page)).toHaveAttribute('data-transition-state', 'idle');
-  await expect(overlay(page)).toHaveCount(0);
+  await waitForFallbackPastMidpoint(page, 'close');
+
+  const closingAnimation = await fallbackAnimationSnapshot(page);
+  expect(closingAnimation.animationCount).toBeGreaterThan(0);
+  expect(closingAnimation.playState).toBe('running');
+  expect(closingAnimation.progress).toBeGreaterThan(0.55);
+  expect(closingAnimation.progress).toBeLessThan(0.95);
+  expect(closingAnimation.opacity).toBeGreaterThan(0);
+  expect(closingAnimation.opacity).toBeLessThan(0.4);
+
+  await Promise.all([
+    expect(cardTrigger(page, 0)).toBeFocused({ timeout: 4_500 }),
+    expect(detailSurface(page)).toBeHidden({ timeout: 4_500 }),
+    expect(root(page)).toHaveAttribute('data-transition-state', 'idle', { timeout: 4_500 }),
+    expect(overlay(page)).toHaveCount(0, { timeout: 4_500 }),
+    expect
+      .poll(async () => (await fallbackAnimationSnapshot(page)).animationCount, { timeout: 4_500 })
+      .toBe(0),
+    expect.poll(() => detailInlineClip(page), { timeout: 4_500 }).toBe(CLOSED_TOP_RIGHT_CLIP),
+  ]);
+
+  const postCloseDetailState = await fullMotionDetailSnapshot(page);
+  expect(postCloseDetailState.hidden).toBe(true);
+  expect(postCloseDetailState.inert).toBe(true);
+  expect(postCloseDetailState.opacity).toBe(1);
+  expect(postCloseDetailState.transform).toBe('none');
+  expect(postCloseDetailState.animationCount).toBe(0);
 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await setDurationMs(page, 10_000);
