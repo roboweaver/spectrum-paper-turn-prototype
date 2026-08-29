@@ -1,5 +1,7 @@
 # Spectrum Paper-Turn Transition Prototype
 
+**[▶ Try the live demo](https://roboweaver.github.io/spectrum-paper-turn-prototype/)**
+
 A proof of concept: can a Spectrum Web Components card animate into a
 full-viewport detail surface as a realistic diagonal sheet-of-paper turn?
 
