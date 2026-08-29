@@ -220,9 +220,16 @@ sp-card { width: 100%; min-height: 330px; }
   cursor: pointer;
 }
 
-.paper-turn-debug button:hover { background: rgb(255 255 255 / 20%); }
+.paper-turn-debug button:hover:not(:disabled) { background: rgb(255 255 255 / 20%); }
 .paper-turn-debug button:focus-visible { outline: 2px solid #7c8cff; outline-offset: 2px; }
 .paper-turn-debug input[type='range'] { width: min(420px, 40vw); accent-color: #7c8cff; }
+.paper-turn-debug input[type='range'][data-debug-speed] { width: min(200px, 18vw); }
+
+.paper-turn-debug__label {
+  opacity: 0.7;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 
 .paper-turn-debug__readout {
   min-width: 210px;
@@ -230,4 +237,13 @@ sp-card { width: 100%; min-height: 330px; }
   opacity: 0.85;
 }
 
-.paper-turn-debug[data-active='false'] input[type='range'] { opacity: 0.4; }
+.paper-turn-debug__readout--speed { min-width: 96px; }
+
+/* Only the scrub track is meaningless while idle; speed stays available. */
+.paper-turn-debug[data-active='false'] input[type='range'][data-debug-scrub] { opacity: 0.4; }
+
+.paper-turn-debug button:disabled,
+.paper-turn-debug input[type='range']:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
