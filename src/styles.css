@@ -1,0 +1,233 @@
+:root {
+  color-scheme: light;
+  font-family: var(--spectrum-sans-font-family-stack, system-ui, sans-serif);
+  background: #f5f5f5;
+}
+
+* { box-sizing: border-box; }
+
+html,
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100%;
+}
+
+button { font: inherit; }
+
+[data-transition-state='preparing'],
+[data-transition-state='opening'],
+[data-transition-state='closing'] {
+  cursor: progress;
+}
+
+.demo-shell {
+  position: relative;
+  min-height: 100vh;
+  overflow: clip;
+}
+
+.list-surface {
+  min-height: 100vh;
+  padding: clamp(24px, 5vw, 72px);
+  background: linear-gradient(145deg, #f8f8f8, #ececec);
+}
+
+.hero { max-width: 760px; margin-bottom: 32px; }
+
+.hero h1,
+.detail-content h2 {
+  margin: 0 0 12px;
+  font-size: clamp(2.4rem, 8vw, 5.5rem);
+  line-height: 0.95;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.card-grid {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 24px;
+}
+
+.card-grid-item { min-width: 0; }
+
+.card-trigger {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.card-trigger:focus-visible { outline: 3px solid #1473e6; outline-offset: 5px; }
+
+sp-card { width: 100%; min-height: 330px; }
+
+.card-preview {
+  width: 100%;
+  min-height: 190px;
+  background:
+    radial-gradient(circle at 75% 20%, rgb(255 255 255 / 55%), transparent 28%),
+    linear-gradient(145deg, color-mix(in srgb, var(--card-color), white 20%), var(--card-color));
+}
+
+.detail-surface {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  min-height: 100vh;
+  padding: clamp(24px, 5vw, 72px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--detail-color), white 88%), white 72%),
+    white;
+  clip-path: polygon(0 0, 0 0, 0 0);
+  will-change: clip-path, opacity, transform;
+}
+
+/* `display: flex` above outranks the UA `[hidden] { display: none }` rule, so
+   the hidden surface has to be re-hidden explicitly. */
+.detail-surface[hidden] { display: none; }
+
+.detail-toolbar { display: flex; justify-content: flex-end; }
+
+/* Spectrum's internal button label is `white-space: normal` and sits in a pill
+   whose height does not grow, so a label that needs marginally more width than
+   its content box wraps to two lines and spills out of the pill. That happens
+   whenever the resolved font is wider than the one the layout was measured
+   with — Adobe Clean installed locally versus a fallback, for instance.
+   `white-space` is inherited, so setting it on the host reaches the label
+   inside the shadow root; `flex: none` keeps the host from being shrunk below
+   its content by the toolbar. */
+.detail-toolbar sp-button {
+  flex: none;
+  white-space: nowrap;
+}
+.detail-content {
+  max-width: 900px;
+  margin-top: clamp(40px, 8vh, 96px);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 8px 32px;
+  margin-top: clamp(24px, 4vh, 48px);
+}
+
+.detail-body h3 {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+}
+
+.detail-body p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+/* Pinned to the bottom of the page so the sheet's trailing edge stays
+   identifiable while it turns. */
+.detail-footer {
+  margin: auto 0 0;
+  padding-top: 24px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.detail-content h2:focus {
+  outline: 3px solid #1473e6;
+  outline-offset: 6px;
+  border-radius: 8px;
+}
+[data-transition-hidden='true'] { visibility: hidden; }
+[data-transition-busy='true'] { pointer-events: none; }
+
+.paper-turn-overlay {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  pointer-events: none;
+}
+
+.paper-turn-overlay canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 600px) {
+  .list-surface,
+  .detail-surface {
+    padding: 20px;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  sp-card {
+    min-height: 280px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detail-surface { will-change: opacity; }
+}
+
+/* Debug control strip. Only mounted when the demo is loaded with ?debug=1. */
+.paper-turn-debug {
+  position: fixed;
+  z-index: 40;
+  inset-inline: 0;
+  inset-block-end: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  background: rgb(20 20 22 / 92%);
+  color: #f4f4f5;
+  font: 500 12px/1.4 system-ui, sans-serif;
+  pointer-events: auto;
+}
+
+.paper-turn-debug button {
+  min-width: 36px;
+  padding: 5px 12px;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 10%);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.paper-turn-debug button:hover { background: rgb(255 255 255 / 20%); }
+.paper-turn-debug button:focus-visible { outline: 2px solid #7c8cff; outline-offset: 2px; }
+.paper-turn-debug input[type='range'] { width: min(420px, 40vw); accent-color: #7c8cff; }
+
+.paper-turn-debug__readout {
+  min-width: 210px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.paper-turn-debug[data-active='false'] input[type='range'] { opacity: 0.4; }

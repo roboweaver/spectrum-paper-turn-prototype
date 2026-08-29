@@ -1,0 +1,529 @@
+import type {
+  Corner,
+  MotionMode,
+  PaperRenderer,
+  TransitionDependencies,
+  TransitionOpenRequest,
+  TransitionState,
+  TransitionView,
+} from './types';
+
+type Endpoint = 'idle' | 'open';
+type Interruption = 'escape' | 'resize' | null;
+
+interface ActiveTransition {
+  request: TransitionOpenRequest;
+  source: HTMLElement | null;
+  renderer: PaperRenderer | null;
+  controller: AbortController | null;
+  progress: number;
+  requestedEndpoint: Endpoint;
+  interruption: Interruption;
+}
+
+interface ActiveFallbackTiming {
+  direction: 'open' | 'close';
+  startedAt: number;
+  durationMs: number;
+}
+
+const FULL_CLIP = 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)';
+const OPEN_SETUP_RECOVERY_ERROR =
+  'Paper-turn open setup cleanup failed while preserving the original error.';
+const CLOSE_SETUP_RECOVERY_ERROR =
+  'Paper-turn close setup cleanup failed while preserving the original error.';
+
+function closedClipForCorner(corner: Corner): string {
+  switch (corner) {
+    case 'top-left':
+      return 'polygon(0% 0%, 0% 0%, 0% 0%)';
+    case 'top-right':
+      return 'polygon(100% 0%, 100% 0%, 100% 0%)';
+    case 'bottom-right':
+      return 'polygon(100% 100%, 100% 100%, 100% 100%)';
+    case 'bottom-left':
+      return 'polygon(0% 100%, 0% 100%, 0% 100%)';
+  }
+}
+
+function getErrorName(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('name' in error)) {
+    return undefined;
+  }
+
+  const { name } = error as { name?: unknown };
+  return typeof name === 'string' ? name : undefined;
+}
+
+function isAbortError(error: unknown): boolean {
+  return getErrorName(error) === 'AbortError';
+}
+
+function normalizeProgress(progress: number): number {
+  if (!Number.isFinite(progress)) {
+    throw new Error('Transition progress must be a finite number');
+  }
+
+  return Math.max(0, Math.min(1, progress));
+}
+
+export class TransitionCoordinator extends EventTarget {
+  public state: TransitionState = 'idle';
+  private active: ActiveTransition | null = null;
+  private activeFallbackTiming: ActiveFallbackTiming | null = null;
+
+  public constructor(
+    private readonly view: TransitionView,
+    private readonly dependencies: TransitionDependencies,
+  ) {
+    super();
+  }
+
+  public async open(request: TransitionOpenRequest): Promise<void> {
+    if (this.state !== 'idle') {
+      throw new Error(`Cannot open while transition state is ${this.state}`);
+    }
+
+    this.setState('preparing');
+    let mode: MotionMode;
+    try {
+      this.view.setBusy(true);
+      this.view.freezeScroll();
+      this.view.prepareDetail(request.sourceId);
+      this.view.setDetailClip(closedClipForCorner(request.grabbedCorner));
+      this.view.setDetailVisible(true);
+      this.view.setDetailInert(true);
+
+      const source = this.view.resolveSource(request.sourceId);
+      if (!source) {
+        throw new Error(`Source card no longer exists: ${request.sourceId}`);
+      }
+
+      this.active = {
+        request,
+        source,
+        renderer: null,
+        controller: null,
+        progress: 0,
+        requestedEndpoint: 'open',
+        interruption: null,
+      };
+
+      mode = this.dependencies.selectMotionMode();
+    } catch (error) {
+      this.recoverOpenSetupFailure(error);
+      throw error;
+    }
+
+    await this.runTransition('open', mode);
+  }
+
+  public async close(): Promise<void> {
+    if (this.state !== 'open' || !this.active) {
+      throw new Error(`Cannot close while transition state is ${this.state}`);
+    }
+
+    let mode: MotionMode;
+    try {
+      this.active.requestedEndpoint = 'idle';
+      this.active.interruption = null;
+      this.active.source = this.view.resolveSource(this.active.request.sourceId);
+      this.view.setBusy(true);
+      this.view.setDetailInert(true);
+      this.view.setListVisible(true);
+
+      mode = this.dependencies.selectMotionMode();
+    } catch (error) {
+      this.recoverCloseSetupFailure(error);
+      throw error;
+    }
+
+    await this.runTransition('close', mode);
+  }
+
+  public cancel(): void {
+    if (!this.active || (this.state !== 'opening' && this.state !== 'closing')) {
+      return;
+    }
+
+    this.active.interruption = 'escape';
+    this.active.progress = this.resolveCancellationProgress();
+    this.active.requestedEndpoint = this.active.progress >= 0.5 ? 'open' : 'idle';
+    this.active.controller?.abort();
+  }
+
+  public handleViewportChange(): void {
+    if (!this.active || (this.state !== 'opening' && this.state !== 'closing')) {
+      return;
+    }
+
+    this.active.interruption = 'resize';
+    this.active.controller?.abort();
+  }
+
+  private async runTransition(direction: 'open' | 'close', preferredMode: MotionMode): Promise<void> {
+    this.setState(direction === 'open' ? 'opening' : 'closing');
+
+    const active = this.requireActive();
+    if (preferredMode === 'fallback' || !active.source) {
+      await this.runFallbackTo(active.requestedEndpoint);
+      return;
+    }
+
+    try {
+      await this.runFull(direction);
+      if (this.requireActive().requestedEndpoint === 'open') {
+        this.settleOpen();
+      } else {
+        this.settleIdle();
+      }
+    } catch (error) {
+      const interruption = this.requireActive().interruption;
+
+      if (isAbortError(error)) {
+        if (interruption) {
+          await this.runFallbackTo(this.requireActive().requestedEndpoint);
+          return;
+        }
+
+        if (direction === 'open') {
+          this.settleIdle(true);
+        } else {
+          this.settleOpen();
+        }
+        throw error;
+      }
+
+      console.error('Paper-turn full motion failed; using fallback.', error);
+      await this.runFallbackTo(this.requireActive().requestedEndpoint);
+    }
+  }
+
+  private async runFull(direction: 'open' | 'close'): Promise<void> {
+    const active = this.requireActive();
+    if (!active.source) {
+      throw new Error('Full motion requires a source card');
+    }
+
+    const controller = new AbortController();
+    active.controller = controller;
+
+    const sourceRect = this.view.measureSource(active.source);
+    const destinationRect = this.view.measureDestination();
+    // Both faces are captured together so the reverse never doubles the
+    // click-to-animate latency.
+    const [texture, backTexture] = await Promise.all([
+      this.dependencies.capture(active.source, this.dependencies.profile),
+      this.captureDestination(),
+    ]);
+
+    if (controller.signal.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }
+
+    active.renderer = this.dependencies.createRenderer({
+      sourceRect,
+      destinationRect,
+      grabbedCorner: active.request.grabbedCorner,
+      texture,
+      backTexture,
+      profile: this.dependencies.profile,
+    });
+    this.view.setSourceHidden(active.source, true);
+
+    const from = direction === 'open' ? 0 : 1;
+    const to = direction === 'open' ? 1 : 0;
+
+    await this.dependencies.animate(
+      from,
+      to,
+      this.dependencies.profile.durationMs,
+      (progress) => {
+        const current = this.requireActive();
+        if (!current.renderer) {
+          throw new Error('Renderer missing during transition frame');
+        }
+
+        current.progress = normalizeProgress(progress);
+        const frame = current.renderer.render(current.progress);
+        this.view.setDetailClip(frame.revealClipPath);
+      },
+      controller.signal,
+    );
+
+    this.requireActive().controller = null;
+  }
+
+  /**
+   * Captures the destination page for the sheet's reverse face.
+   *
+   * The destination is already displayed but clipped to a point, so the clip is
+   * neutralised on html-to-image's clone rather than on the live element. A
+   * failure here only costs the printed reverse, so it degrades to blank paper
+   * instead of failing the whole transition.
+   */
+  private async captureDestination(): Promise<HTMLCanvasElement | null> {
+    try {
+      return await this.dependencies.capture(
+        this.view.resolveDestination(),
+        this.dependencies.profile,
+        { clipPath: 'none' },
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  private async runFallbackTo(endpoint: Endpoint): Promise<void> {
+    const active = this.requireActive();
+    const direction = endpoint === 'open' ? 'open' : 'close';
+    const durationMs = this.normalizeFallbackDuration(this.dependencies.profile.fallbackDurationMs);
+
+    this.disposeRenderer();
+    if (active.source) {
+      this.view.setSourceHidden(active.source, false);
+    }
+
+    if (durationMs <= 0) {
+      this.activeFallbackTiming = null;
+      active.controller = null;
+      this.settleRequestedEndpoint(endpoint);
+      return;
+    }
+
+    const controller = new AbortController();
+    active.controller = controller;
+    this.activeFallbackTiming = {
+      direction,
+      startedAt: this.readNow(),
+      durationMs,
+    };
+
+    if (endpoint === 'open') {
+      this.view.setDetailClip(FULL_CLIP);
+    }
+
+    try {
+      await this.dependencies.runFallback(direction, durationMs, controller.signal);
+    } catch (error) {
+      if (!isAbortError(error)) {
+        console.error('Paper-turn fallback failed; settling to a stable endpoint.', error);
+      }
+    } finally {
+      this.activeFallbackTiming = null;
+      if (this.active) {
+        this.active.controller = null;
+      }
+    }
+
+    this.settleRequestedEndpoint(endpoint);
+  }
+
+  private settleOpen(): void {
+    const active = this.requireActive();
+
+    // Swap the DOM to its final state while the overlay canvas is still on top
+    // (z-index 30 covers everything beneath it), so the user never sees the
+    // intermediate frame where the list-surface gradient is visible.  Only then
+    // remove the overlay so the live DOM is already correct on first paint.
+    this.view.setBusy(false);
+    this.view.setDetailClip(FULL_CLIP);
+    this.view.setListVisible(false);
+    this.view.setDetailVisible(true);
+    this.view.setDetailInert(false);
+    if (active.source) {
+      this.view.setSourceHidden(active.source, false);
+    }
+
+    this.disposeRenderer();
+
+    active.controller = null;
+    active.interruption = null;
+    active.progress = 1;
+    this.activeFallbackTiming = null;
+    this.setState('open');
+    this.view.focusDetailHeading();
+  }
+
+  private settleIdle(skipFocus = false): void {
+    const request = this.active?.request ?? null;
+    const trigger = request?.trigger ?? null;
+    const source = this.active?.source ?? null;
+
+    // Set the DOM to its final idle state while the overlay is still covering
+    // everything, then remove the overlay so the list surface is already correct
+    // on first paint (no pop from detail → list background colour).
+    this.view.setBusy(false);
+    this.view.setDetailInert(true);
+    if (request) {
+      this.view.setDetailClip(closedClipForCorner(request.grabbedCorner));
+    }
+    this.view.setDetailVisible(false);
+    this.view.setListVisible(true);
+    if (source) {
+      this.view.setSourceHidden(source, false);
+    }
+
+    this.disposeRenderer();
+
+    if (this.active) {
+      this.active.controller = null;
+      this.active.interruption = null;
+      this.active.progress = 0;
+    }
+    this.activeFallbackTiming = null;
+    this.view.restoreScroll();
+    this.active = null;
+    this.setState('idle');
+
+    if (!skipFocus) {
+      if (trigger?.isConnected) {
+        trigger.focus({ preventScroll: true });
+      } else {
+        const currentSource = request ? this.resolveCurrentSourceForFocus(request.sourceId, source) : source;
+        if (currentSource?.isConnected) {
+          currentSource.focus({ preventScroll: true });
+        } else {
+          this.view.focusListFallback();
+        }
+      }
+    }
+  }
+
+  private recoverOpenSetupFailure(originalError: unknown): void {
+    const source = this.active?.source ?? null;
+
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.disposeRenderer());
+    if (source) {
+      this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () =>
+        this.view.setSourceHidden(source, false),
+      );
+    }
+
+    if (this.active) {
+      this.active.controller = null;
+      this.active.interruption = null;
+      this.active.progress = 0;
+    }
+    this.activeFallbackTiming = null;
+
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.setBusy(false));
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailInert(true));
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailVisible(false));
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.setListVisible(true));
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.view.restoreScroll());
+    this.active = null;
+    this.runSetupRecoveryStep(OPEN_SETUP_RECOVERY_ERROR, originalError, () => this.setState('idle'));
+  }
+
+  private recoverCloseSetupFailure(originalError: unknown): void {
+    const source = this.active?.source ?? null;
+
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.disposeRenderer());
+    if (source) {
+      this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () =>
+        this.view.setSourceHidden(source, false),
+      );
+    }
+
+    if (this.active) {
+      this.active.controller = null;
+      this.active.interruption = null;
+      this.active.progress = 1;
+    }
+    this.activeFallbackTiming = null;
+
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setBusy(false));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailClip(FULL_CLIP));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setListVisible(false));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailVisible(true));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.setDetailInert(false));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.setState('open'));
+    this.runSetupRecoveryStep(CLOSE_SETUP_RECOVERY_ERROR, originalError, () => this.view.focusDetailHeading());
+  }
+
+  private disposeRenderer(): void {
+    const renderer = this.active?.renderer ?? null;
+    if (this.active) {
+      this.active.renderer = null;
+    }
+
+    renderer?.dispose();
+  }
+
+  private runSetupRecoveryStep(message: string, originalError: unknown, step: () => void): void {
+    try {
+      step();
+    } catch (cleanupError) {
+      console.error(message, cleanupError, originalError);
+    }
+  }
+
+  private resolveCurrentSourceForFocus(sourceId: string, previousSource: HTMLElement | null): HTMLElement | null {
+    try {
+      return this.view.resolveSource(sourceId);
+    } catch {
+      return previousSource;
+    }
+  }
+
+  private resolveCancellationProgress(): number {
+    const fallbackProgress = this.measureFallbackProgress();
+    if (fallbackProgress !== null) {
+      return fallbackProgress;
+    }
+
+    const progress = this.active?.progress;
+    if (typeof progress !== 'number' || !Number.isFinite(progress)) {
+      return 0;
+    }
+
+    return normalizeProgress(progress);
+  }
+
+  private measureFallbackProgress(): number | null {
+    const timing = this.activeFallbackTiming;
+    if (!timing || timing.durationMs <= 0) {
+      return null;
+    }
+
+    const startedAt = Number.isFinite(timing.startedAt) ? timing.startedAt : 0;
+    const elapsedRatio = Math.max(0, Math.min(1, (this.readNow() - startedAt) / timing.durationMs));
+    return timing.direction === 'open' ? elapsedRatio : 1 - elapsedRatio;
+  }
+
+  private normalizeFallbackDuration(durationMs: number): number {
+    return Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 0;
+  }
+
+  private settleRequestedEndpoint(endpoint: Endpoint): void {
+    if ((this.active?.requestedEndpoint ?? endpoint) === 'open') {
+      this.settleOpen();
+      return;
+    }
+
+    this.settleIdle();
+  }
+
+  private readNow(): number {
+    const now = performance.now();
+    return Number.isFinite(now) ? now : 0;
+  }
+
+  private requireActive(): ActiveTransition {
+    if (!this.active) {
+      throw new Error('Missing active transition');
+    }
+
+    return this.active;
+  }
+
+  private setState(nextState: TransitionState): void {
+    if (this.state === nextState) {
+      return;
+    }
+
+    this.state = nextState;
+    this.dispatchEvent(new Event('statechange'));
+  }
+}
