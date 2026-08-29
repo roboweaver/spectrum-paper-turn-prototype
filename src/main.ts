@@ -10,9 +10,9 @@ import { browserMotionMode } from './transition/capabilities';
 import { DomTransitionView } from './transition/dom-transition-view';
 import { defaultMotionProfile } from './transition/motion-profile';
 import { PaperTurnRenderer } from './transition/paper-turn-renderer';
-import { animateProgress } from './transition/timeline';
 import { createTransitionDebugger } from './debug/transition-debugger';
 import { createAnimationSpeedController } from './debug/animation-speed';
+import { isDebugPanelVisible, syncDebugParam } from './debug/debug-visibility';
 import { mountDebugPanel } from './debug/debug-panel';
 import { TransitionCoordinator } from './transition/transition-coordinator';
 import type { Corner, MotionProfile } from './transition/types';
@@ -62,7 +62,10 @@ if (!root) {
 
 const searchParams = new URLSearchParams(window.location.search);
 const profile = createMotionProfile(searchParams);
-const transitionDebugger = searchParams.has('debug') ? createTransitionDebugger() : null;
+// The demo is published for inspection, so the debugger is always installed:
+// the panel can be re-shown at any moment from the chip, and a driver that had
+// to be swapped in first could not pause or scrub a turn already under way.
+const transitionDebugger = createTransitionDebugger();
 const app = createDemoApp(root);
 const transitionView = new DomTransitionView({
   list: app.listSurface,
@@ -77,12 +80,16 @@ const coordinator = new TransitionCoordinator(transitionView, {
   capture: captureElement,
   createRenderer: (input) => new PaperTurnRenderer(input),
   runFallback: createFallbackRunner(app.detailSurface),
-  animate: transitionDebugger?.animate ?? animateProgress,
+  animate: transitionDebugger.animate,
 });
 
-if (transitionDebugger) {
-  mountDebugPanel(transitionDebugger, createAnimationSpeedController(profile));
-}
+// The speed controller seeds its slider from `?duration=` but does not write
+// back to the profile, so making the panel default-on does not change what
+// `?duration=` means for anyone who is not touching the slider.
+mountDebugPanel(transitionDebugger, createAnimationSpeedController(profile), document.body, {
+  visible: isDebugPanelVisible(searchParams),
+  onVisibilityChange: (visible) => syncDebugParam(visible),
+});
 
 root.dataset.transitionState = coordinator.state;
 coordinator.addEventListener('statechange', () => {

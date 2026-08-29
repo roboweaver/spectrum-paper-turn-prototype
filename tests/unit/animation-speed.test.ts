@@ -200,9 +200,37 @@ describe('createAnimationSpeedController', () => {
 
     expect(controller.state().multiplier).toBe(0.5);
     expect(controller.state().durationMs).toBe(1440);
-    // The seed scales the fallback too, keeping the single-multiplier contract.
-    expect(profile.fallbackDurationMs).toBe(400);
     expect(controller.state().sliderIndex).toBe(multiplierToSliderIndex(0.5));
+  });
+
+  it('leaves the profile exactly as handed in until the slider is moved', () => {
+    const profile = mutableProfile({ durationMs: 1440 });
+    const controller = createAnimationSpeedController(profile);
+
+    // `?duration=` documents an override for the full-motion duration only.
+    // Seeding must not quietly restate it as a global multiplier and drag the
+    // reduced-motion crossfade along with it — the panel is on by default, so
+    // that would become the meaning of `?duration=` for every visitor.
+    expect(profile.durationMs).toBe(1440);
+    expect(profile.fallbackDurationMs).toBe(200);
+
+    // Moving the slider is the point at which a single multiplier really is
+    // what was asked for, so from there both durations move together.
+    controller.setMultiplier(0.5);
+    expect(profile.durationMs).toBe(1440);
+    expect(profile.fallbackDurationMs).toBe(400);
+  });
+
+  it('keeps a ?duration outside the track intact while showing the nearest reachable speed', () => {
+    const profile = mutableProfile({ durationMs: 60_000 });
+    const controller = createAnimationSpeedController(profile);
+
+    expect(controller.state()).toEqual(
+      expect.objectContaining({ durationMs: SLOWEST_DURATION_MS, sliderIndex: 0 }),
+    );
+    // The slider cannot represent 60 s, but clamping the readout must not
+    // shorten a duration the caller explicitly asked for.
+    expect(profile.durationMs).toBe(60_000);
   });
 
   it('clamps a ?duration seed that sits outside the track', () => {
@@ -245,7 +273,13 @@ describe('createAnimationSpeedController', () => {
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
-  it('refuses to be constructed over the frozen default profile', () => {
-    expect(() => createAnimationSpeedController(defaultMotionProfile)).toThrow(TypeError);
+  it('refuses to write over the frozen default profile', () => {
+    // Construction is read-only now, so the frozen profile only bites when the
+    // slider actually tries to retime it. The guard this test exists for — that
+    // the shared default profile is never mutated in place — is unchanged.
+    const controller = createAnimationSpeedController(defaultMotionProfile);
+
+    expect(() => controller.setMultiplier(2)).toThrow(TypeError);
+    expect(defaultMotionProfile.durationMs).toBe(720);
   });
 });

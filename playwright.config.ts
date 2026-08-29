@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -7,6 +8,9 @@ export default defineConfig({
     toHaveScreenshot: {
       animations: 'disabled',
       maxDiffPixelRatio: 0.01,
+      // The debug panel ships on by default; keep it out of the paper-turn
+      // baselines so they stay sensitive only to the transition itself.
+      stylePath: fileURLToPath(new URL('./tests/e2e/screenshot.css', import.meta.url)),
     },
   },
   use: {

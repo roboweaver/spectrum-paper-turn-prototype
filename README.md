@@ -26,6 +26,22 @@ Query parameters for inspecting the motion:
 | --- | --- |
 | `?duration=1200` | Override full-motion duration in milliseconds. |
 | `?fallback=1` | Force the reduced-motion opacity/scale path. |
+| `?debug=0` | Hide the debug panel, leaving a small chip to bring it back. |
+
+The debug panel is **on by default** — this demo is published so the turn can be
+inspected, so the controls are the point rather than a hidden extra. Only
+`debug=0`, `false`, `off`, or `no` (any case) hide it. Every other value,
+including `?debug`, `?debug=1`, and anything unrecognised, shows it, so a typo
+can never quietly remove the controls the page exists to show. `Hide` and the
+chip rewrite that parameter with `history.replaceState`, so the address bar stays
+copy-pasteable while the page — and any turn mid-flight — is left alone.
+
+Because the panel is always mounted, its speed slider now starts wherever
+`?duration=` put it. Seeding is read-only: `?duration=` still means exactly what
+it says — an override for the full-motion duration — and neither it nor
+`fallbackDurationMs` is rewritten until the slider is actually moved. Durations
+outside the slider's 180 ms – 10000 ms track still run at the value asked for;
+only the readout shows the nearest reachable speed.
 
 `window.__paperTurn` exposes `{ coordinator, profile }` for poking at it from
 the console.

@@ -1,0 +1,21 @@
+/*
+ * Injected into every `toHaveScreenshot` comparison via `stylePath` in
+ * `playwright.config.ts`.
+ *
+ * The debug panel is on by default now, so without this it would appear in
+ * every visual baseline — and the committed baselines are darwin-only and are
+ * not run in CI, so nothing would have caught the mismatch until someone ran
+ * the suite locally.
+ *
+ * Suppressing it here rather than navigating the visual specs with `?debug=0`
+ * is deliberate on two counts. Hiding via the parameter still leaves the
+ * re-show chip on screen, so it would not actually clear the frame. And this
+ * states the rule once, globally: debug chrome is never part of a visual
+ * baseline, so the paper-turn screenshots stay sensitive only to the paper
+ * turn. The panel is `position: fixed`, so removing it from the paint does not
+ * reflow the document or change the full-page height.
+ */
+[data-paper-turn-debug],
+[data-paper-turn-debug-chip] {
+  display: none !important;
+}
