@@ -12,6 +12,7 @@ import { defaultMotionProfile } from './transition/motion-profile';
 import { PaperTurnRenderer } from './transition/paper-turn-renderer';
 import { animateProgress } from './transition/timeline';
 import { createTransitionDebugger } from './debug/transition-debugger';
+import { createAnimationSpeedController } from './debug/animation-speed';
 import { mountDebugPanel } from './debug/debug-panel';
 import { TransitionCoordinator } from './transition/transition-coordinator';
 import type { Corner, MotionProfile } from './transition/types';
@@ -39,9 +40,11 @@ function resolveGrabbedCorner(trigger: HTMLElement): Corner {
 
 function createMotionProfile(searchParams: URLSearchParams): MotionProfile {
   const durationMs = Number(searchParams.get('duration'));
+  // Always a copy: `defaultMotionProfile` is frozen, and the debug speed
+  // control retimes the next turn by writing to this object in place.
   return Number.isFinite(durationMs) && durationMs > 0
     ? { ...defaultMotionProfile, durationMs }
-    : defaultMotionProfile;
+    : { ...defaultMotionProfile };
 }
 
 function reportCoordinatorFailure(action: 'open' | 'close', error: unknown): void {
@@ -78,7 +81,7 @@ const coordinator = new TransitionCoordinator(transitionView, {
 });
 
 if (transitionDebugger) {
-  mountDebugPanel(transitionDebugger);
+  mountDebugPanel(transitionDebugger, createAnimationSpeedController(profile));
 }
 
 root.dataset.transitionState = coordinator.state;
