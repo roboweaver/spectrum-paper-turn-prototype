@@ -17,6 +17,16 @@ function button(label: string, title: string): HTMLButtonElement {
   return element;
 }
 
+export interface DebugPanelOptions {
+  /** Whether the panel starts on screen. Defaults to true. */
+  readonly visible?: boolean;
+  /**
+   * Called only when the user hides or re-shows the panel, never on mount.
+   * `main.ts` uses it to keep the URL in step via `history.replaceState`.
+   */
+  readonly onVisibilityChange?: (visible: boolean) => void;
+}
+
 /**
  * A small always-on-top control strip for inspecting the turn frame by frame.
  * Mounted on `document.body` rather than inside `#app` so it stays clickable
@@ -25,11 +35,16 @@ function button(label: string, title: string): HTMLButtonElement {
  *
  * Carries two sliders: one scrubs position through the current turn, the other
  * retimes the next turn via the shared motion profile.
+ *
+ * The panel can be hidden down to a small chip. Both live under one teardown,
+ * and hiding only toggles `hidden` — nothing is unmounted, so the turn keeps
+ * running and the chosen speed survives a hide/show round trip.
  */
 export function mountDebugPanel(
   controller: TransitionDebugger,
   speed: AnimationSpeedController,
   parent: HTMLElement = document.body,
+  options: DebugPanelOptions = {},
 ): () => void {
   const panel = document.createElement('div');
   panel.className = 'paper-turn-debug';
@@ -73,11 +88,30 @@ export function mountDebugPanel(
   const speedReset = button('Reset 1x', 'Reset animation speed to 1x (720 ms)');
   speedReset.dataset.debugSpeedReset = 'true';
 
-  panel.append(toggle, back, forward, slider, readout, speedLabel, speedSlider, speedReadout, speedReset);
-  parent.append(panel);
+  const hide = button('Hide', 'Hide the debug panel');
+  hide.dataset.debugHide = 'true';
+
+  const chip = button('Debug', 'Show the debug panel');
+  chip.className = 'paper-turn-debug-chip';
+  chip.dataset.paperTurnDebugChip = 'true';
+
+  panel.append(
+    toggle,
+    back,
+    forward,
+    slider,
+    readout,
+    speedLabel,
+    speedSlider,
+    speedReadout,
+    speedReset,
+    hide,
+  );
+  parent.append(panel, chip);
 
   let dragging = false;
   let draggingSpeed = false;
+  let visible = options.visible ?? true;
 
   const renderSpeed = (state: AnimationSpeedState): void => {
     if (!draggingSpeed) {
@@ -110,12 +144,31 @@ export function mountDebugPanel(
   const unsubscribe = controller.subscribe(render);
   const unsubscribeSpeed = speed.subscribe(renderSpeed);
 
+  const applyVisibility = (): void => {
+    panel.hidden = !visible;
+    chip.hidden = visible;
+  };
+
+  const setVisible = (next: boolean): void => {
+    if (visible === next) {
+      return;
+    }
+
+    visible = next;
+    applyVisibility();
+    options.onVisibilityChange?.(next);
+  };
+
+  applyVisibility();
+
   const onToggle = (): void => controller.toggle();
   const onBack = (): void => controller.step(-STEP);
   const onForward = (): void => controller.step(STEP);
   const onScrub = (): void => controller.scrubTo(Number(slider.value) / SLIDER_STEPS);
   const onSpeed = (): void => speed.setSliderIndex(Number(speedSlider.value));
   const onSpeedReset = (): void => speed.reset();
+  const onHide = (): void => setVisible(false);
+  const onShow = (): void => setVisible(true);
   const onDragStart = (): void => {
     dragging = true;
   };
@@ -130,6 +183,12 @@ export function mountDebugPanel(
   };
 
   const onKeyDown = (event: KeyboardEvent): void => {
+    // A hidden panel must not keep stealing Space and the arrow keys: someone
+    // who hid the controls did not ask for hidden shortcuts over the demo.
+    if (!visible) {
+      return;
+    }
+
     const target = event.target as HTMLElement | null;
 
     if (target && (target.tagName === 'INPUT' || target.isContentEditable)) {
@@ -168,6 +227,8 @@ export function mountDebugPanel(
     [speedSlider, 'pointerup', onSpeedDragEnd],
     [speedSlider, 'blur', onSpeedDragEnd],
     [speedReset, 'click', onSpeedReset],
+    [hide, 'click', onHide],
+    [chip, 'click', onShow],
   ];
 
   for (const [target, type, listener] of bindings) {
@@ -186,5 +247,6 @@ export function mountDebugPanel(
 
     window.removeEventListener('keydown', onKeyDown);
     panel.remove();
+    chip.remove();
   };
 }

@@ -128,6 +128,9 @@ export interface AnimationSpeedController {
  * `profile.fallbackDurationMs` when it starts a crossfade, so rewriting the
  * profile between transitions is enough to retime the next one. The profile
  * handed in must not be frozen.
+ *
+ * Construction is read-only: the profile is left exactly as handed in until the
+ * slider is moved. See the note in the body for why.
  */
 export function createAnimationSpeedController(profile: MotionProfile): AnimationSpeedController {
   const listeners = new Set<(state: AnimationSpeedState) => void>();
@@ -152,7 +155,18 @@ export function createAnimationSpeedController(profile: MotionProfile): Animatio
     }
   };
 
-  apply(multiplier);
+  // The incoming profile is read, never rewritten, until someone actually moves
+  // the slider. Writing back here would make `?duration=` mean something it has
+  // never claimed to mean: it documents an override for the *full-motion*
+  // duration, but the write-back also rescales `fallbackDurationMs` and clamps
+  // the request to the slider's 180 ms - 10000 ms track. That was reachable
+  // before only under `?debug`; with the panel on by default it would silently
+  // become the meaning of `?duration=` for every visitor, and it demonstrably
+  // breaks reduced-motion timing (`?duration=10000` would stretch the 200 ms
+  // crossfade to 2778 ms). Seeding the multiplier is enough to put the slider
+  // and readout in the right place; the first drag or Reset then takes over
+  // both durations, which is the point at which a global multiplier is what
+  // the user is actually asking for.
 
   return {
     state: stateOf,

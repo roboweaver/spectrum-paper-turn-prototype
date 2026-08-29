@@ -4,7 +4,7 @@ import {
   DEFAULT_SLIDER_INDEX,
   SPEED_SLIDER_STEPS,
 } from '../../src/debug/animation-speed';
-import { mountDebugPanel } from '../../src/debug/debug-panel';
+import { mountDebugPanel, type DebugPanelOptions } from '../../src/debug/debug-panel';
 import type { DebugState, TransitionDebugger } from '../../src/debug/transition-debugger';
 import { defaultMotionProfile } from '../../src/transition/motion-profile';
 import type { MotionProfile } from '../../src/transition/types';
@@ -39,11 +39,11 @@ function createStubDebugger(): TransitionDebugger & { emit(state: DebugState): v
   };
 }
 
-function setup(profileOverrides: Partial<MotionProfile> = {}) {
+function setup(profileOverrides: Partial<MotionProfile> = {}, options: DebugPanelOptions = {}) {
   const profile: MotionProfile = { ...defaultMotionProfile, ...profileOverrides };
   const controller = createStubDebugger();
   const speed = createAnimationSpeedController(profile);
-  const teardown = mountDebugPanel(controller, speed, document.body);
+  const teardown = mountDebugPanel(controller, speed, document.body, options);
 
   const query = <T extends HTMLElement>(selector: string): T => {
     const element = document.querySelector<T>(selector);
@@ -63,6 +63,8 @@ function setup(profileOverrides: Partial<MotionProfile> = {}) {
     speedReadout: query<HTMLElement>('[data-debug-speed-readout]'),
     speedReset: query<HTMLButtonElement>('[data-debug-speed-reset]'),
     scrub: query<HTMLInputElement>('[data-debug-scrub]'),
+    hide: query<HTMLButtonElement>('[data-debug-hide]'),
+    chip: query<HTMLButtonElement>('[data-paper-turn-debug-chip]'),
   };
 }
 
@@ -264,6 +266,96 @@ describe('debug panel transport controls', () => {
   });
 });
 
+describe('debug panel visibility', () => {
+  it('opens showing the panel and not the chip', () => {
+    const { panel, chip } = setup();
+
+    expect(panel.hidden).toBe(false);
+    expect(chip.hidden).toBe(true);
+  });
+
+  it('does not report a visibility change for the state it was mounted in', () => {
+    const onVisibilityChange = vi.fn();
+
+    setup({}, { visible: true, onVisibilityChange });
+    expect(onVisibilityChange).not.toHaveBeenCalled();
+
+    document.body.innerHTML = '';
+    setup({}, { visible: false, onVisibilityChange });
+    expect(onVisibilityChange).not.toHaveBeenCalled();
+  });
+
+  it('can be mounted already hidden, leaving only the chip on screen', () => {
+    const { panel, chip } = setup({}, { visible: false });
+
+    expect(panel.hidden).toBe(true);
+    expect(chip.hidden).toBe(false);
+  });
+
+  it('hides in place when Hide is pressed and reports it once', () => {
+    const onVisibilityChange = vi.fn();
+    const { panel, chip, hide } = setup({}, { onVisibilityChange });
+
+    hide.click();
+
+    expect(panel.hidden).toBe(true);
+    expect(chip.hidden).toBe(false);
+    expect(onVisibilityChange).toHaveBeenCalledExactlyOnceWith(false);
+    // Hiding is a view change, not an unmount: the panel stays in the document
+    // so no transition state or speed setting is lost.
+    expect(document.body.contains(panel)).toBe(true);
+  });
+
+  it('brings the panel back when the chip is pressed', () => {
+    const onVisibilityChange = vi.fn();
+    const { panel, chip, hide } = setup({}, { onVisibilityChange });
+
+    hide.click();
+    onVisibilityChange.mockClear();
+    chip.click();
+
+    expect(panel.hidden).toBe(false);
+    expect(chip.hidden).toBe(true);
+    expect(onVisibilityChange).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it('ignores a repeated Hide so the URL is not rewritten for nothing', () => {
+    const onVisibilityChange = vi.fn();
+    const { hide } = setup({}, { onVisibilityChange });
+
+    hide.click();
+    hide.click();
+
+    expect(onVisibilityChange).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('keeps the chosen speed across a hide and show round trip', () => {
+    const { profile, hide, chip, speedReadout, speedSlider } = setup();
+
+    drag(speedSlider, 0);
+    const slowed = profile.durationMs;
+
+    hide.click();
+    chip.click();
+
+    expect(profile.durationMs).toBe(slowed);
+    expect(speedSlider.value).toBe('0');
+    expect(speedReadout.textContent).toContain('ms');
+  });
+
+  it('stops answering keyboard shortcuts while hidden', () => {
+    const { controller, hide, chip } = setup();
+
+    hide.click();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }));
+    expect(controller.toggle).not.toHaveBeenCalled();
+
+    chip.click();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }));
+    expect(controller.toggle).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('debug panel teardown', () => {
   it('removes the panel and every listener it added', () => {
     const removeSpy = vi.spyOn(window, 'removeEventListener');
@@ -285,5 +377,21 @@ describe('debug panel teardown', () => {
       controller.emit(RUNNING);
     }).not.toThrow();
     expect(speedSlider.disabled).toBe(false);
+  });
+
+  it('takes the chip with it and leaves its click wiring inert', () => {
+    const onVisibilityChange = vi.fn();
+    const { panel, chip, hide, teardown } = setup({}, { onVisibilityChange });
+
+    teardown();
+
+    expect(document.querySelector('[data-paper-turn-debug-chip]')).toBeNull();
+
+    // A detached chip that still toggled visibility would be a leaked listener
+    // holding the panel alive, which is exactly what teardown must rule out.
+    chip.click();
+    hide.click();
+    expect(onVisibilityChange).not.toHaveBeenCalled();
+    expect(panel.hidden).toBe(false);
   });
 });

@@ -62,11 +62,16 @@ interface ActiveRun {
 /**
  * A drop-in replacement for `animateProgress` that can pause, resume, and scrub.
  *
- * It exists so the paper turn can be inspected frame by frame. It is wired in
- * only when the demo is loaded with `?debug=1`, and it deliberately lives
- * outside `src/transition/` so the shipped transition modules stay unaware of
- * it: the coordinator already takes `animate` as an injected dependency, which
- * is the only seam this needs.
+ * It exists so the paper turn can be inspected frame by frame. Because the demo
+ * ships with the debug panel on by default, it now drives every turn, and it
+ * deliberately lives outside `src/transition/` so the shipped transition modules
+ * stay unaware of it: the coordinator already takes `animate` as an injected
+ * dependency, which is the only seam this needs.
+ *
+ * Position accumulates from per-frame deltas rather than absolute elapsed time,
+ * which is what makes pausing possible: held frames simply contribute nothing.
+ * The deltas telescope, so an unpaused run still lands on the same timing as
+ * `animateProgress`.
  */
 export function createTransitionDebugger(clock: FrameClock = browserClock): TransitionDebugger {
   const listeners = new Set<(state: DebugState) => void>();
