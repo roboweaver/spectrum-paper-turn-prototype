@@ -68,3 +68,113 @@ jobs:
           path: coverage/
           if-no-files-found: warn
           retention-days: 14
+
+  e2e:
+    name: Playwright functional e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        # actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up Node.js
+        # actions/setup-node@v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # webkit is required as well as chromium: webkit-mobile is a configured
+      # project, so its browser is launched even for tests it ends up skipping.
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Functional e2e tests
+        run: npm run test:e2e -- --reporter=list,html
+
+      - name: Verify working tree is clean
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Working tree is dirty after running the e2e suite. Commit the generated files or add them to .gitignore."
+            git status --porcelain
+            exit 1
+          fi
+          echo "Working tree is clean."
+
+      - name: Upload Playwright report
+        if: always()
+        # actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: playwright-report-e2e
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  visual:
+    name: Playwright visual regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        # actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up Node.js
+        # actions/setup-node@v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+
+      # Fails the job if the linux baselines are missing rather than letting
+      # Playwright write them on the fly and report a false pass.
+      - name: Require committed linux baselines
+        run: |
+          missing=0
+          for name in start peak-curl diagonal-midpoint settled; do
+            file="tests/e2e/visual.spec.ts-snapshots/paper-turn-${name}-chromium-desktop-linux.png"
+            if [ ! -f "$file" ]; then
+              echo "::error::Missing linux baseline $file. Run the 'Update visual baselines' workflow on this branch and commit the artifact."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Visual regression tests
+        run: npm run test:visual -- --reporter=list,html
+
+      - name: Verify working tree is clean
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Working tree is dirty after running the visual suite. Baselines must not be rewritten by a verification run."
+            git status --porcelain
+            exit 1
+          fi
+          echo "Working tree is clean."
+
+      - name: Upload Playwright report
+        if: always()
+        # actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: playwright-report-visual
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14

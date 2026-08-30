@@ -1,0 +1,69 @@
+name: Update visual baselines
+
+# Regenerates the Linux visual-regression baselines on a GitHub-hosted runner.
+#
+# Why this exists as CI rather than a local command: headless Chromium renders
+# WebGL through SwiftShader, whose output is deterministic on a given CPU
+# architecture but can differ between architectures. Baselines generated on an
+# Apple Silicon (arm64) machine — including inside Docker — are not guaranteed to
+# match the amd64 ubuntu-latest runner that verifies them. Generating them here
+# means the baselines are produced by the same environment that compares them.
+#
+# Usage: dispatch against the branch that needs baselines, download the
+# "visual-baselines-linux" artifact, and commit the PNGs it contains.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-visual-baselines-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  update-baselines:
+    name: Regenerate linux baselines
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        # actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up Node.js
+        # actions/setup-node@v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # --project=chromium-desktop keeps the mobile projects out of the run
+      # entirely: they have no baselines and must stay skipped.
+      - name: Regenerate baselines
+        run: npm run test:visual -- --project=chromium-desktop --update-snapshots --reporter=list
+
+      - name: Show regenerated files
+        if: always()
+        run: git status --porcelain tests/e2e/visual.spec.ts-snapshots
+
+      - name: Upload regenerated baselines
+        if: always()
+        # actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: visual-baselines-linux
+          path: tests/e2e/visual.spec.ts-snapshots/**
+          if-no-files-found: error
+          retention-days: 14
