@@ -44,11 +44,6 @@ async function detailInlineClip(page: Page) {
   return detailSurface(page).evaluate((element) => (element as HTMLElement).style.clipPath);
 }
 
-async function overlayProgress(page: Page) {
-  const progressText = await overlay(page).getAttribute('data-progress');
-  return progressText === null ? Number.NaN : Number(progressText);
-}
-
 async function openCardAndExpectHeading(page: Page, index: number, title: string) {
   await cardTrigger(page, index).click();
   await expect(detailSurface(page)).toBeVisible();
@@ -190,7 +185,10 @@ test('touch opening reveals the third card detail on mobile projects', async ({ 
 });
 
 test('Escape cancels an opening turn and returns the root to idle', async ({ page }) => {
-  await page.goto('/?duration=2000');
+  // The turn has to still be in flight when Escape lands, and every assertion
+  // below costs a round-trip to the browser. 2000ms is comfortable locally but
+  // not on a shared CI runner, where the open can settle before the keypress.
+  await page.goto('/?duration=8000');
 
   await cardTrigger(page, 0).click();
   await expect(overlay(page)).toHaveCount(1);
@@ -209,16 +207,22 @@ test('Escape during closing settles at the nearest open endpoint', async ({ page
   await page.goto('/?duration=120');
 
   await openCardAndExpectHeading(page, 0, 'Spectrum foundations');
-  await setDurationMs(page, 2000);
+  await setDurationMs(page, 8000);
 
   await closeButton(page).click();
   await expect(overlay(page)).toHaveCount(1);
   await expect(overlay(page)).toBeVisible();
-  await page.waitForFunction(() => {
-    const progress = Number(document.querySelector('.paper-turn-overlay')?.getAttribute('data-progress'));
-    return Number.isFinite(progress) && progress > 0.5 && progress < 0.95;
-  }, { timeout: 1500 });
-  const closingProgress = await overlayProgress(page);
+  // Assert on the sample the predicate actually validated. Re-reading
+  // data-progress afterwards races the animation: the value has moved on by the
+  // time the second round-trip lands.
+  const closingProgressHandle = await page.waitForFunction(
+    () => {
+      const progress = Number(document.querySelector('.paper-turn-overlay')?.getAttribute('data-progress'));
+      return Number.isFinite(progress) && progress > 0.5 && progress < 0.95 ? progress : null;
+    },
+    { timeout: 10000 },
+  );
+  const closingProgress = await closingProgressHandle.jsonValue();
   expect(closingProgress).toBeGreaterThan(0.5);
   expect(closingProgress).toBeLessThan(0.95);
 
