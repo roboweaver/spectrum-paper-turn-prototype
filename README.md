@@ -95,6 +95,15 @@ gh run download <run-id> -n visual-baselines-linux -D tests/e2e/visual.spec.ts-s
 git add tests/e2e/visual.spec.ts-snapshots && git commit -m 'Refresh linux visual baselines'
 ```
 
+`workflow_dispatch` is only available for workflows that already exist on the
+default branch. Before that — or for any branch that needs baselines ahead of a
+merge — push the branch under `update-visual-baselines/` instead and the run
+starts on its own:
+
+```bash
+git push origin HEAD:update-visual-baselines/my-change
+```
+
 ## Documentation
 
 - [Design specification](docs/superpowers/specs/2026-08-27-spectrum-paper-turn-design.md) —

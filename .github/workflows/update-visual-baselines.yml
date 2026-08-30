@@ -11,9 +11,17 @@ name: Update visual baselines
 #
 # Usage: dispatch against the branch that needs baselines, download the
 # "visual-baselines-linux" artifact, and commit the PNGs it contains.
+#
+# workflow_dispatch only works once this file is on the default branch — that is
+# a GitHub constraint, not a choice. The push trigger below covers the
+# bootstrap case and any future branch that needs baselines before merge: push
+# to update-visual-baselines/<anything> and the run starts on its own.
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'update-visual-baselines/**'
 
 permissions:
   contents: read
