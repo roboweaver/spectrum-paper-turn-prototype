@@ -52,8 +52,56 @@ the console.
 npm run build       # tsc --noEmit && vite build
 npm run test:unit
 npm run test:e2e
-npm run test:visual # Chromium-desktop on macOS only; skips elsewhere
+npm run test:visual # chromium-desktop only; skips the two mobile projects
 npm run test:all
+```
+
+CI runs all of the above on `ubuntu-latest`: lint, typecheck, unit tests with
+coverage and build in one job, the functional Playwright suite in a second, and
+the visual-regression suite in a third. The visual job **fails** if the Linux
+baselines are missing, so a green check always means screenshots were actually
+compared rather than silently skipped.
+
+### Visual baselines
+
+`toHaveScreenshot` baselines live in `tests/e2e/visual.spec.ts-snapshots/` and
+Playwright suffixes each file with its project and platform, so the macOS and
+Linux sets coexist:
+
+```
+paper-turn-start-chromium-desktop-darwin.png
+paper-turn-start-chromium-desktop-linux.png
+```
+
+Only `chromium-desktop` is baselined; `chromium-mobile` and `webkit-mobile` skip
+the visual test by design.
+
+Refresh the **macOS** baselines locally:
+
+```bash
+npm run test:visual -- --update-snapshots
+```
+
+Refresh the **Linux** baselines with the `Update visual baselines` workflow —
+never locally. Headless Chromium renders WebGL through SwiftShader, which is
+deterministic on a given CPU architecture but can differ between architectures,
+so baselines produced on an Apple Silicon (arm64) Mac are not guaranteed to
+match the amd64 runner that verifies them. Generating them on the runner keeps
+producer and verifier identical.
+
+```bash
+gh workflow run update-visual-baselines.yml --ref <your-branch>
+gh run download <run-id> -n visual-baselines-linux -D tests/e2e/visual.spec.ts-snapshots
+git add tests/e2e/visual.spec.ts-snapshots && git commit -m 'Refresh linux visual baselines'
+```
+
+`workflow_dispatch` is only available for workflows that already exist on the
+default branch. Before that — or for any branch that needs baselines ahead of a
+merge — push the branch under `update-visual-baselines/` instead and the run
+starts on its own:
+
+```bash
+git push origin HEAD:update-visual-baselines/my-change
 ```
 
 ## Documentation
