@@ -38,13 +38,18 @@ const CORNER_VIEWPORT = { width: 1280, height: 900 };
  * prior baseline to match.
  *
  * The height is load-bearing, not cosmetic. A single column of three 280px cards
- * plus the header scrolls to 1141px, and a `fullPage` capture of a page taller
- * than the viewport makes Chromium capture beyond the viewport, which fires a
- * `resize` event in the page. The coordinator treats a resize as an interruption
- * and settles through the fallback, so the screenshot would catch the settled
- * detail page rather than a fold. 1200px keeps the whole grid page inside the
- * viewport, exactly as the 1280x900 corner viewport does, so the capture disturbs
- * nothing.
+ * plus the header measures 1169px at this width, and a `fullPage` capture of a
+ * page taller than the viewport makes Chromium capture beyond the viewport, which
+ * fires a `resize` event in the page. The coordinator treats a resize as an
+ * interruption and settles through the fallback, so the screenshot would catch
+ * the settled detail page rather than a fold. 1200px keeps the whole grid page
+ * inside the viewport, exactly as the 1280x900 corner viewport does, so the
+ * capture disturbs nothing.
+ *
+ * That leaves about 30px of slack, because the hero's outbound links wrap to
+ * their own line at this width. Anything further added above the grid needs this
+ * height raised in the same change — and raising it re-frames both midline
+ * baselines, so they have to be regenerated on both platforms.
  */
 const MIDLINE_VIEWPORT = { width: 400, height: 1200 };
 
