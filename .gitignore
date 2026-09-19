@@ -6,3 +6,8 @@ playwright-report/
 blob-report/
 playwright/.cache/
 .kiro/
+
+# Spec execution telemetry: per-task execution and chat-session IDs with
+# timestamps, rewritten on every task run. The plan itself -- requirements.md,
+# design.md, tasks.md -- is tracked; this is machine state, not review material.
+plans/**/tasks.meta.json
