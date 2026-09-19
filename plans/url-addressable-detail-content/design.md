@@ -470,21 +470,156 @@ One thing phase 1 should avoid on account of it: do not deepen the assumption
 that the component renders its own tiles. Keeping the resolver keyed on a URL
 rather than on a `CardRecord` id is enough to leave the inversion open.
 
+---
+
+## The navigation-surface use case (OmnisTools)
+
+The intended use in OPA — OmnisTools — is to **replace** the navigation, not to
+decorate it. Today it is a Bootstrap navbar with dropdowns (`Tracking` → List,
+Add, Report, Actions ▸, Activities ▸, Topics ▸). The proposal is that the
+dropdown goes away and each destination becomes a tile, so the tile grid *is* the
+navigation and turning a tile over is how you arrive at a page.
+
+### What this framing fixes
+
+A grid is a much better fit than a dropdown, and several problems evaporate:
+
+- **The full anchor vocabulary works as designed.** A vertical dropdown is a
+  single column, so every item would resolve through the degenerate
+  single-column rule and the eight-anchor variety would collapse to one axis
+  family. A real grid is exactly the shape the resolver was built for.
+- **No dropdown clipping.** A tile grid inside a Bootstrap `.dropdown-menu` would
+  have fought that element's overflow and positioning. A grid that is the page
+  body does not.
+- **The list-surface model is already correct.** The grid is a page, not transient
+  chrome, so hiding the list on settle (`setListVisible(false)`) is the right
+  behaviour rather than something to work around.
+
+### The blocker: these destinations are applications, not documents
+
+This is the significant finding, and nothing above addresses it.
+
+The destination pages are interactive. The Tracking list has a search field, an
+Advanced Search control, and sortable column headers. The Add page has date and
+time pickers, dependent multi-selects, and a checkbox table. All of that is
+script-driven.
+
+`DOMParser` does not execute scripts, and `importNode` of parsed content does not
+run `<script>` elements. So **adopting one of these pages yields dead HTML**: the
+markup arrives, the pickers never initialise, the table never sorts.
+[Security posture](#security-posture) already says a page depending on its own
+scripts should fall through to normal navigation — but for OmnisTools that is
+*every* page, so the enhancement would never engage and the feature would do
+nothing.
+
+Two architectures resolve it. They differ by an order of magnitude in scope.
+
+**A — Preview, then navigate.** The tile's reverse face is not the live page. It
+is a lightweight, server-rendered **preview fragment** with no script dependency:
+the first N rows of the trackings table as plain HTML, the form's shape without
+its pickers. The turn reveals that preview, and on settle a real browser
+navigation loads the genuine interactive page.
+
+This sidesteps rehydration completely and matches the stated mental model almost
+exactly — "the back of the tile would be the list." The fragment contract is then
+satisfied by a purpose-built partial the app already knows how to render, rather
+than by trying to make full application pages adoptable. The cost is a second
+load after the turn, and a moment where previewed content is replaced by the real
+thing. For navigation that is a fair trade, because the preview is genuinely
+useful information rather than a spinner.
+
+**B — Client-side navigation with script re-execution.** Fetch, adopt, re-execute
+the page's scripts, `pushState`, and land on the real interactive page with no
+second load. This is essentially what Turbo Drive does: intercept link clicks,
+fetch in the background, replace the body, and manage history and script
+evaluation.
+
+If this is the desired end state, **adopt Turbo and drive the paper-turn from its
+transition hooks rather than building a bespoke navigation layer.** Script
+re-execution, dedup across visits, ordering, history, and cache invalidation are
+each their own problem, and rebuilding them underneath a transition effect would
+be the tail wagging the dog. Whether OmnisTools already uses Turbo, htmx, or
+similar is therefore a live question that changes this answer completely.
+
+**Recommendation: A.** It delivers the described experience, fits the fragment
+contract this design already specifies, and does not commit the application to a
+navigation framework as a side effect of wanting a transition. B stays open, and
+gets much cheaper if Turbo is ever adopted for its own reasons.
+
+### Grid shape policy is wrong for arbitrary navigation
+
+`gridShapeFor` derives its column count from the most balanced **exact factor
+pair**, deliberately so the shape is always full with no ragged last row. That
+serves the demo's purpose — clean, namable shapes that reach all eight anchors —
+but it is the wrong policy for a real navigation set, whose size is whatever it
+happens to be. Eleven destinations is prime, so it asks for a single row of
+eleven, which is not a launcher layout.
+
+Navigation wants *"N columns, filled left to right, ragged last row allowed."*
+The measurement side already supports that — `gridPositionFromRects` clusters
+measured rects, and `gridShapeFor`'s own contract notes a capped shape "reports
+its real, possibly partial, last row" — so this is a policy change in the demo's
+layout chooser, not a change to anchor resolution.
+
+Related: `MAX_TILE_COUNT` is `16` and `clampTileCount` hard-clamps to it, with
+the `cards` array a second ceiling at the same number, so a 20-destination grid
+would silently lose four tiles. Both caps live in the **demo layer**, not the
+mechanism — `resolveGrabAnchor` works purely from measured rects and knows
+nothing about tile counts — so raising them is small. But note
+`docs/architecture.md` records the resolution table as verified against an
+independent expectation over "all 64 grid shapes," which is the 1–16 range.
+Beyond it is untested rather than broken, and wants coverage before a real nav
+set depends on it.
+
+### Duration is tuned for a demo, not for work
+
+The shipped full-motion duration is 720 ms. That is right for a prototype whose
+purpose is to be admired. As the primary navigation of a tracking application it
+would be traversed dozens of times a day, and 720 ms on every navigation will
+wear badly.
+
+This needs retuning — materially shorter — for the navigation case, and the
+existing machinery already allows it: `durationMs` is a `MotionProfile` field and
+the debug speed control exists precisely to find a value by feel.
+`prefers-reduced-motion` already routes to the fallback, so the accessibility
+floor is covered; this is about the default for everyone else.
+
+### Stacking, concretely
+
+`.detail-surface` is `z-index: 20` and the WebGL overlay is `z-index: 30`.
+Bootstrap's `$zindex-fixed` is **1030**, so a fixed OmnisTools navbar renders
+*over* both, and a modal backdrop (1040+) higher still. This is the concrete
+instance of the hazard in [Packaging as a component](#packaging-as-a-component),
+and it is why the top layer via `<dialog>.showModal()` is the preferred answer
+rather than an escalating z-index. That spike is load-bearing for this use case
+rather than optional.
+
+---
+
+## Phasing
+
+Deliberately more than one PR. The first is self-contained and reviewable; the
+later ones are each independently valuable.
+
 | Phase | Scope | Ships |
 | --- | --- | --- |
 | **1** | `ContentResolver`, fragment contract, `CardRecord.url`, tiles as anchors, generic detail region, `renderDetail` adopts a fragment, fonts/images awaited before capture, failure falls through to navigation | A working URL-backed turn, transition subsystem untouched |
 | **2** | Prefetch on hover/focus/touch, fragment cache, latency budget, fallback commit on slow resolve, pending affordance | The turn feels native rather than merely correct |
 | **3** | `pushState`/`popstate`, deep linking, query-param carry-over. *Not* standalone page rendering — the host already serves real pages. | Real navigation |
 | **4** | **Component packaging.** Generalise token inlining beyond `--spectrum`, scope or shadow the CSS, top-layer surface, dynamic Three import, guarded element registration, adopt host tiles instead of rendering them, overridable scroll freeze | Embeddable in Grimoire, WordPress, OPA |
-| **5** | Cross-origin taint logging, capture-cost telemetry, authoring lint for the fragment contract | Operability |
+| **5** | Preview-fragment endpoint per destination, nav grid layout policy, raised tile ceiling, retuned duration | Usable as OmnisTools navigation |
+| **6** | Cross-origin taint logging, capture-cost telemetry, authoring lint for the fragment contract | Operability |
 
-**This branch is Phase 1.** Phases 2–5 get their own branches and their own PRs.
+**This branch is Phase 1.** Phases 2–6 get their own branches and their own PRs.
 
-Phase 4 is the largest and is gated on knowing all three host stacks. Grimoire is
-Go with server-rendered templates under `themes/` and a separate React admin SPA,
-so its public site is a straightforward host. WordPress is the hard one: unknown
-theme CSS, plugin soup, an admin bar above our stacking context, and near-certain
-user-authored content. OPA is unidentified — see [Open questions](#open-questions).
+Phase 4 is the largest and is gated on the host stacks. Grimoire is Go with
+server-rendered templates under `themes/` and a separate React admin SPA, so its
+public site is a straightforward host. WordPress is the hard one: unknown theme
+CSS, plugin soup, an admin bar above our stacking context, and near-certain
+user-authored content. OmnisTools is a Bootstrap application whose pages are
+script-driven, which is what makes phase 5 a distinct piece of work rather than a
+configuration of phase 4 — see
+[The navigation-surface use case](#the-navigation-surface-use-case-omnistools).
 
 ---
 
@@ -526,16 +661,24 @@ any of them should be settled unilaterally:
    its own. See [Packaging as a component](#packaging-as-a-component) — this
    answer simplifies the design rather than complicating it, because the host's
    links already work and the component becomes a true progressive enhancement.
-2. **What is OPA?** Named as a target host alongside WordPress and Grimoire, and
-   I have not assumed what it is. Its stack decides how much of the component's
-   CSS-isolation and adoption work it needs. **Blocking the component design.**
-3. **Is any detail-page content user-authored?** Decides whether a sanitisation
+2. ~~**What is OPA?**~~ **Answered: OmnisTools**, a Bootstrap application whose
+   navbar dropdowns would be replaced by a tile grid. See
+   [The navigation-surface use case](#the-navigation-surface-use-case-omnistools).
+   It raises its own blocking question, below.
+3. **Does OmnisTools already use Turbo, htmx, or a similar navigation layer?**
+   This decides between architecture A and B for the script-rehydration problem,
+   and the two differ by an order of magnitude in scope. **Blocking phase 5.**
+4. **Is a preview fragment acceptable as the tile's reverse face,** with the real
+   interactive page loading on settle? Architecture A depends on it, and it is a
+   product decision about whether a brief content swap after the turn is a fair
+   price for not building a navigation framework.
+5. **Is any detail-page content user-authored?** Decides whether a sanitisation
    layer is in scope at all. Near-certainly *yes* for WordPress, which makes the
    host the security boundary.
-4. **Is the 16-record demo index kept** as a fixture alongside real content, or
+6. **Is the 16-record demo index kept** as a fixture alongside real content, or
    replaced? It is what every visual baseline and the tile-count control are
    written against, so replacing it is a larger change than it looks.
-5. **Does the latency budget belong in `MotionProfile`?** It is a timing and a
+7. **Does the latency budget belong in `MotionProfile`?** It is a timing and a
    designer-tunable, which argues yes; but `MotionProfile` is constructed as a
    literal by four test suites, and `docs/architecture.md` records that widening
    it is a deliberate cost. A separate resolver config may be cleaner.
