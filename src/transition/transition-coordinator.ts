@@ -1,5 +1,6 @@
+import { anchorUv } from './geometry';
 import type {
-  Corner,
+  GrabAnchor,
   MotionMode,
   PaperRenderer,
   TransitionDependencies,
@@ -33,17 +34,25 @@ const OPEN_SETUP_RECOVERY_ERROR =
 const CLOSE_SETUP_RECOVERY_ERROR =
   'Paper-turn close setup cleanup failed while preserving the original error.';
 
-function closedClipForCorner(corner: Corner): string {
-  switch (corner) {
-    case 'top-left':
-      return 'polygon(0% 0%, 0% 0%, 0% 0%)';
-    case 'top-right':
-      return 'polygon(100% 0%, 100% 0%, 100% 0%)';
-    case 'bottom-right':
-      return 'polygon(100% 100%, 100% 100%, 100% 100%)';
-    case 'bottom-left':
-      return 'polygon(0% 100%, 0% 100%, 0% 100%)';
-  }
+/**
+ * The clip the detail page wears before the sheet has swept over any of it:
+ * three coincident points at the grab anchor, so nothing is revealed.
+ *
+ * Read straight out of `anchorUv` rather than switched over, which makes it
+ * total across all eight anchors by construction and keeps it in step with the
+ * sheet's own first frame: `revealClipPath(rect, anchor, 0)` collapses to the
+ * same three points in the same percentage form (**P11**). Every anchor
+ * component is `0`, `0.5`, or `1`, so scaling by `100` yields the exact
+ * integers `0`, `50`, and `100` with no rounding to reconcile — the two strings
+ * are character-identical whenever the rect's own pixel round-trip is exact,
+ * and otherwise agree to well within the `1e-6` CSS pixel tolerance the
+ * contract asks for.
+ */
+export function closedClipForAnchor(anchor: GrabAnchor): string {
+  const uv = anchorUv[anchor];
+  const point = `${uv.x * 100}% ${uv.y * 100}%`;
+
+  return `polygon(${point}, ${point}, ${point})`;
 }
 
 function getErrorName(error: unknown): string | undefined {
@@ -90,7 +99,7 @@ export class TransitionCoordinator extends EventTarget {
       this.view.setBusy(true);
       this.view.freezeScroll();
       this.view.prepareDetail(request.sourceId);
-      this.view.setDetailClip(closedClipForCorner(request.grabbedCorner));
+      this.view.setDetailClip(closedClipForAnchor(request.grabAnchor));
       this.view.setDetailVisible(true);
       this.view.setDetailInert(true);
 
@@ -224,7 +233,7 @@ export class TransitionCoordinator extends EventTarget {
     active.renderer = this.dependencies.createRenderer({
       sourceRect,
       destinationRect,
-      grabbedCorner: active.request.grabbedCorner,
+      grabAnchor: active.request.grabAnchor,
       texture,
       backTexture,
       profile: this.dependencies.profile,
@@ -356,7 +365,7 @@ export class TransitionCoordinator extends EventTarget {
     this.view.setBusy(false);
     this.view.setDetailInert(true);
     if (request) {
-      this.view.setDetailClip(closedClipForCorner(request.grabbedCorner));
+      this.view.setDetailClip(closedClipForAnchor(request.grabAnchor));
     }
     this.view.setDetailVisible(false);
     this.view.setListVisible(true);

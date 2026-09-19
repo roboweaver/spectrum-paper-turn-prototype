@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
 // Committed baselines exist per platform: Playwright's default snapshot path
 // template suffixes each file with {-projectName}{-platform}, so the darwin and
@@ -13,6 +13,43 @@ const STARTUP_TICK_MS = 1;
 const STARTUP_TIMEOUT_MS = 500;
 const PEAK_CURL_ELAPSED_MS = 1200;
 const DIAGONAL_MIDPOINT_ELAPSED_MS = 1488;
+const MIDLINE_MIDPOINT_ELAPSED_MS = DIAGONAL_MIDPOINT_ELAPSED_MS;
+
+const PEAK_CURL_PROGRESS_RANGE = { min: 0.46, max: 0.54 } as const;
+const MIDPOINT_PROGRESS_RANGE = { min: 0.58, max: 0.66 } as const;
+
+const CORNER_VIEWPORT = { width: 1280, height: 900 };
+
+/**
+ * The midline checkpoints need a viewport where a tile genuinely resolves
+ * `top-center`, and with only three tiles in the demo that shape is reachable in
+ * exactly one place: a single column of three rows, where the interior tile is
+ * the row-centre of a degenerate single-column grid. The grid is
+ * `repeat(auto-fit, minmax(min(100%, 240px), 1fr))` and collapses to `1fr` below
+ * the 600px breakpoint, so 400px lays the three tiles out as 3 rows x 1 column.
+ *
+ * A fully centred tile in a non-degenerate grid also grabs `top-center`, but that
+ * needs at least 3 rows x 3 columns and so is out of reach with three tiles.
+ *
+ * At the corner viewport of 1280px the grid measures 1 row x 3 columns, where no
+ * tile resolves `top-center` at all — which is why these two checkpoints run at
+ * their own width. Their screenshots are therefore a different size from the
+ * corner baselines; that is fine, because they are new snapshot names with no
+ * prior baseline to match.
+ *
+ * The height is load-bearing, not cosmetic. A single column of three 280px cards
+ * plus the header scrolls to 1141px, and a `fullPage` capture of a page taller
+ * than the viewport makes Chromium capture beyond the viewport, which fires a
+ * `resize` event in the page. The coordinator treats a resize as an interruption
+ * and settles through the fallback, so the screenshot would catch the settled
+ * detail page rather than a fold. 1200px keeps the whole grid page inside the
+ * viewport, exactly as the 1280x900 corner viewport does, so the capture disturbs
+ * nothing.
+ */
+const MIDLINE_VIEWPORT = { width: 400, height: 1200 };
+
+/** The interior tile of the single-column grid: row 1 of 3, the row centre. */
+const MIDLINE_TILE_INDEX = 1;
 
 const FULL_PAGE_SCREENSHOT = {
   animations: 'disabled',
@@ -73,40 +110,85 @@ async function expectOverlayProgressInRange(
   expect(progress!).toBeLessThanOrEqual(expectedRange.max);
 }
 
+/**
+ * Baselines are committed for one project on the platforms listed above only, so
+ * every checkpoint test skips elsewhere rather than comparing against a PNG that
+ * was rendered by a different GPU path.
+ */
+function skipUnlessBaselinedTarget(testInfo: TestInfo): void {
+  const isSupportedVisualBaseline =
+    testInfo.project.name === 'chromium-desktop' && BASELINED_PLATFORMS.includes(process.platform);
+
+  test.skip(
+    !isSupportedVisualBaseline,
+    `Visual baselines are committed only for project "chromium-desktop" on ${BASELINED_PLATFORMS.join(' and ')} (current: ${testInfo.project.name} on ${process.platform}).`,
+  );
+}
+
+/**
+ * The one deterministic scrub every checkpoint is driven through: a virtual clock
+ * installed before navigation and paused, one activation, then the startup ticks
+ * that carry the overlay to its `progress = 0` frame. From there each caller only
+ * advances the clock, so a checkpoint's elapsed time is the only thing that
+ * distinguishes it.
+ */
+async function startTurnOnPausedClock(page: Page, tileIndex: number): Promise<void> {
+  await page.clock.install();
+  await page.goto(`/?duration=${TRANSITION_DURATION_MS}`);
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 50);
+
+  const tile = page.locator('[data-card-trigger]').nth(tileIndex);
+  await expect(tile).toBeVisible();
+
+  await tile.click();
+  await advanceClockUntilOverlayStarts(page);
+}
+
 test.describe('paper-turn visual checkpoints', () => {
-  test.use({ viewport: { width: 1280, height: 900 } });
+  test.use({ viewport: CORNER_VIEWPORT });
 
   test('captures deterministic paper-turn checkpoints', async ({ page }, testInfo) => {
-    const isSupportedVisualBaseline =
-      testInfo.project.name === 'chromium-desktop' &&
-      BASELINED_PLATFORMS.includes(process.platform);
-    test.skip(
-      !isSupportedVisualBaseline,
-      `Visual baselines are committed only for project "chromium-desktop" on ${BASELINED_PLATFORMS.join(' and ')} (current: ${testInfo.project.name} on ${process.platform}).`,
-    );
+    skipUnlessBaselinedTarget(testInfo);
 
-    await page.clock.install();
-    await page.goto(`/?duration=${TRANSITION_DURATION_MS}`);
-    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 50);
-
-    const firstCard = page.locator('[data-card-trigger]').first();
-    await expect(firstCard).toBeVisible();
-
-    await firstCard.click();
-    await advanceClockUntilOverlayStarts(page);
+    await startTurnOnPausedClock(page, 0);
     await expect(page).toHaveScreenshot('paper-turn-start.png', FULL_PAGE_SCREENSHOT);
 
     await page.clock.runFor(PEAK_CURL_ELAPSED_MS);
-    await expectOverlayProgressInRange(page, { min: 0.46, max: 0.54 }, 'Peak curl checkpoint');
+    await expectOverlayProgressInRange(page, PEAK_CURL_PROGRESS_RANGE, 'Peak curl checkpoint');
     await expect(page).toHaveScreenshot('paper-turn-peak-curl.png', FULL_PAGE_SCREENSHOT);
 
     await page.clock.runFor(DIAGONAL_MIDPOINT_ELAPSED_MS - PEAK_CURL_ELAPSED_MS);
-    await expectOverlayProgressInRange(page, { min: 0.58, max: 0.66 }, 'Diagonal midpoint checkpoint');
+    await expectOverlayProgressInRange(page, MIDPOINT_PROGRESS_RANGE, 'Diagonal midpoint checkpoint');
     await expect(page).toHaveScreenshot('paper-turn-diagonal-midpoint.png', FULL_PAGE_SCREENSHOT);
 
     await page.clock.runFor(TRANSITION_DURATION_MS - DIAGONAL_MIDPOINT_ELAPSED_MS);
     await expect(root(page)).toHaveAttribute('data-transition-state', 'open');
     await expect(overlay(page)).toHaveCount(0);
     await expect(page).toHaveScreenshot('paper-turn-settled.png', FULL_PAGE_SCREENSHOT);
+  });
+});
+
+test.describe('paper-turn midline visual checkpoints', () => {
+  test.use({ viewport: MIDLINE_VIEWPORT });
+
+  test('captures deterministic midline-fold checkpoints', async ({ page }, testInfo) => {
+    skipUnlessBaselinedTarget(testInfo);
+
+    await startTurnOnPausedClock(page, MIDLINE_TILE_INDEX);
+
+    // Guard the fold before spending a pixel on it. The anchor is resolved from
+    // the measured layout, so a CSS or breakpoint change could silently move this
+    // tile into a shape that folds about a diagonal instead — and the screenshot
+    // would still pass its own comparison while no longer covering a midline
+    // fold at all. Reading the published anchor makes that failure loud.
+    await expect(overlay(page)).toHaveAttribute('data-grab-anchor', 'top-center');
+
+    await page.clock.runFor(PEAK_CURL_ELAPSED_MS);
+    await expectOverlayProgressInRange(page, PEAK_CURL_PROGRESS_RANGE, 'Midline peak curl checkpoint');
+    await expect(page).toHaveScreenshot('paper-turn-midline-peak-curl.png', FULL_PAGE_SCREENSHOT);
+
+    await page.clock.runFor(MIDLINE_MIDPOINT_ELAPSED_MS - PEAK_CURL_ELAPSED_MS);
+    await expectOverlayProgressInRange(page, MIDPOINT_PROGRESS_RANGE, 'Midline midpoint checkpoint');
+    await expect(page).toHaveScreenshot('paper-turn-midline-midpoint.png', FULL_PAGE_SCREENSHOT);
   });
 });

@@ -146,7 +146,7 @@ jobs:
       - name: Require committed linux baselines
         run: |
           missing=0
-          for name in start peak-curl diagonal-midpoint settled; do
+          for name in start peak-curl diagonal-midpoint settled midline-peak-curl midline-midpoint; do
             file="tests/e2e/visual.spec.ts-snapshots/paper-turn-${name}-chromium-desktop-linux.png"
             if [ ! -f "$file" ]; then
               echo "::error::Missing linux baseline $file. Run the 'Update visual baselines' workflow on this branch and commit the artifact."

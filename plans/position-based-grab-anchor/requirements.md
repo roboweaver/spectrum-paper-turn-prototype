@@ -490,37 +490,65 @@ tunables.*
 
 #### Acceptance Criteria
 
-1. WHEN a grab anchor is supplied, THE Geometry_Module SHALL select the fold axis that
-   joins the two anchors of the grab anchor's own family that are neither the grab anchor
-   nor the pivot anchor.
+1. WHEN a grab anchor is supplied, THE Geometry_Module SHALL return exactly one fold
+   axis, being the line that joins the two anchors of the grab anchor's own family —
+   corner or edge midpoint — that are neither the grab anchor nor the pivot anchor,
+   reported as a fold-axis kind of `diagonal` or `midline` together with two endpoint
+   points in unit-square coordinates.
 2. WHEN the grab anchor is `top-right` or `bottom-left`, THE Geometry_Module SHALL select
-   the main diagonal `u = v` as the fold axis, of kind `diagonal`.
+   the main diagonal `u = v` as the fold axis, of kind `diagonal`, with endpoints
+   `(0, 0)` and `(1, 1)`.
 3. WHEN the grab anchor is `top-left` or `bottom-right`, THE Geometry_Module SHALL select
-   the anti-diagonal `u + v = 1` as the fold axis, of kind `diagonal`.
+   the anti-diagonal `u + v = 1` as the fold axis, of kind `diagonal`, with endpoints
+   `(0, 1)` and `(1, 0)`.
 4. WHEN the grab anchor is `top-center` or `bottom-center`, THE Geometry_Module SHALL
-   select the horizontal midline `v = 0.5` as the fold axis, of kind `midline`.
+   select the horizontal midline `v = 0.5` as the fold axis, of kind `midline`, with
+   endpoints `(0, 0.5)` and `(1, 0.5)`.
 5. WHEN the grab anchor is `middle-left` or `middle-right`, THE Geometry_Module SHALL
-   select the vertical midline `u = 0.5` as the fold axis, of kind `midline`.
-6. THE Geometry_Module SHALL assign a grab anchor and its pivot anchor the same fold-axis
-   table entry.
-7. WHEN a fold basis is constructed, THE Geometry_Module SHALL return a unit axis vector
-   along the fold line, a unit normal orthogonal to that axis oriented toward the grab
-   anchor, an origin lying on the fold line, a positive `axisLength`, and a positive
-   `maxPerp` equal to the perpendicular distance from the grab anchor to the fold line.
+   select the vertical midline `u = 0.5` as the fold axis, of kind `midline`, with
+   endpoints `(0.5, 0)` and `(0.5, 1)`.
+6. WHEN a grab anchor and its pivot anchor are each supplied, THE Geometry_Module SHALL
+   return the same fold-axis table entry for both — identical kind and identical endpoint
+   coordinates — and SHALL return unit normals that are exact negations of each other
+   within an absolute tolerance of `1 × 10⁻⁶` per component.
+7. WHEN a fold basis is constructed, THE Geometry_Module SHALL return an axis vector
+   along the fold line and a normal orthogonal to that axis, each of magnitude `1` and
+   with an axis-normal dot product of `0` within an absolute tolerance of `1 × 10⁻⁶`, an
+   origin lying on the fold line within that same tolerance, an `axisLength` of `√2` for
+   kind `diagonal` and `1` for kind `midline`, and a `maxPerp` equal to the perpendicular
+   distance from the grab anchor to the fold line, being `1 / √2` for kind `diagonal` and
+   `0.5` for kind `midline`.
 8. WHEN a fold basis is constructed, THE Geometry_Module SHALL produce a reflection
-   `p ↦ p − 2 · ((p − origin) · normal) · normal` equal to the closed-form reflection
-   recorded for that anchor in the design's anchor table.
+   `p ↦ p − 2 · ((p − origin) · normal) · normal` whose every component agrees with the
+   closed-form reflection recorded for that anchor in the design's anchor table within an
+   absolute tolerance of `1 × 10⁻⁶` in unit-square coordinates.
 9. WHEN the fold-axis endpoints for one anchor are exchanged, THE Geometry_Module SHALL
-   produce the same vertex positions within floating-point tolerance, since the turned
-   position is independent of which point on the line is the origin and the ridge term
-   satisfies `sin(π t) = sin(π (1 − t))`.
+   produce, at every progress value in `[0, 1]`, vertex positions agreeing with those
+   produced from the unexchanged endpoints within an absolute tolerance of `1 × 10⁻⁴` CSS
+   pixels per component, since the turned position is independent of which point on the
+   line is the origin and the ridge term satisfies `sin(π t) = sin(π (1 − t))`.
 10. THE Geometry_Module SHALL apply the same per-vertex deformation body to both axis
-    families, consuming only the fold basis.
+    families, consuming only the fold basis, so that no deformation term reads the
+    fold-axis kind.
 11. THE Geometry_Module SHALL keep every motion-profile value and the
-    `PERSPECTIVE_STRENGTH`, `FACING_FLOOR`, and `ARC_BULGE` constants at their current
-    values, since `acrossFold` and `along / axisLength` are normalized in both families.
-12. WHEN a corner grab anchor is supplied, THE Geometry_Module SHALL produce vertex
-    positions equal to the current corner behavior within floating-point tolerance.
+    `PERSPECTIVE_STRENGTH`, `FACING_FLOOR`, and `ARC_BULGE` constants at the values they
+    hold before this feature, since `acrossFold = perp / maxPerp` lies within `[−1, 1]`
+    and `along / axisLength` lies within `[0, 1]` in both families.
+12. WHEN a corner grab anchor is supplied, THE Geometry_Module SHALL produce, at every
+    progress value in `[0, 1]`, vertex positions agreeing with the corner behavior in
+    effect before this feature within an absolute tolerance of `1 × 10⁻⁴` CSS pixels per
+    component.
+13. WHEN a fold basis is constructed, THE Geometry_Module SHALL orient the unit normal
+    toward the grab anchor, such that its dot product with the vector from the fold-axis
+    origin to the grab anchor's unit-square coordinate equals `maxPerp` within an
+    absolute tolerance of `1 × 10⁻⁶` and is therefore strictly positive.
+14. THE Geometry_Module SHALL hold exactly one fold-axis entry for each of the eight grab
+    anchors, so that fold-axis selection and fold-basis construction complete without
+    throwing for every one of the eight anchors.
+15. WHEN the same grab anchor is supplied on repeated invocations, THE Geometry_Module
+    SHALL return fold-axis and fold-basis values that are equal component for component,
+    deriving them from the anchor argument alone and leaving every supplied value
+    unmutated.
 
 ### Requirement 10: Midline reflection exactness at arbitrary aspect ratios
 
@@ -533,24 +561,44 @@ case does not.*
 
 #### Acceptance Criteria
 
-1. WHEN the grab anchor is `top-center` or `bottom-center`, THE Geometry_Module SHALL map
-   each vertex's back-face coordinate by `(u, v) → (u, 1 − v)`.
-2. WHEN the grab anchor is `middle-left` or `middle-right`, THE Geometry_Module SHALL map
-   each vertex's back-face coordinate by `(u, v) → (1 − u, v)`.
-3. WHERE the grab anchor is an edge midpoint, WHEN source and destination rects have
-   independently varied widths and heights, THE Geometry_Module SHALL place the
-   `progress = 1` vertex positions at the pixel-space mirror about the destination rect's
-   corresponding centerline within floating-point tolerance.
-4. THE Geometry_Module SHALL compute both axis families in unit-square coordinates and
-   SHALL map the result out through the base rect, so that a corner reflection stays
-   exact for non-square rects.
-5. WHEN back-face coordinates are computed, THE Geometry_Module SHALL return
-   `(columns + 1) · (rows + 1) · 2` entries, each within `[0, 1]`, and SHALL return the
-   original coordinates when the computation is applied twice.
-6. THE Geometry_Module SHALL compute back-face coordinates for any integer `columns` and
-   `rows` of at least `1`, independent of whether those dimensions are even.
-7. THE Paper_Turn_Renderer SHALL compute back-face coordinates once at construction from
-   the resolved grab anchor.
+1. WHERE the grab anchor is `top-center` or `bottom-center`, WHEN back-face coordinates
+   are computed, THE Geometry_Module SHALL map each vertex's front-face coordinate
+   `(u, v)` to the back-face coordinate `(u, 1 − v)`, with each component equal to the
+   closed form within `1 × 10⁻⁶`.
+2. WHERE the grab anchor is `middle-left` or `middle-right`, WHEN back-face coordinates
+   are computed, THE Geometry_Module SHALL map each vertex's front-face coordinate
+   `(u, v)` to the back-face coordinate `(1 − u, v)`, with each component equal to the
+   closed form within `1 × 10⁻⁶`.
+3. WHERE the grab anchor is `top-center` or `bottom-center`, WHEN progress reaches `1` for
+   a source rect and a destination rect whose widths and heights each lie within `1` to
+   `4096` CSS pixels and vary independently over aspect ratios from `1:20` through `20:1`,
+   THE Geometry_Module SHALL place every vertex position within `1 × 10⁻⁶` CSS pixels of
+   its mirror about the destination rect's horizontal centerline.
+4. WHERE the grab anchor is `middle-left` or `middle-right`, WHEN progress reaches `1` for
+   a source rect and a destination rect whose widths and heights each lie within `1` to
+   `4096` CSS pixels and vary independently over aspect ratios from `1:20` through `20:1`,
+   THE Geometry_Module SHALL place every vertex position within `1 × 10⁻⁶` CSS pixels of
+   its mirror about the destination rect's vertical centerline.
+5. THE Geometry_Module SHALL compute both axis families in unit-square coordinates and
+   SHALL map the result out through the base rect, so that a corner reflection stays exact
+   in unit-square coordinates for a rect whose width and height differ.
+6. WHERE the grab anchor is a corner, WHEN progress reaches `1` for a destination rect
+   whose width and height differ, THE Geometry_Module SHALL place each vertex at its
+   unit-square reflection mapped through the destination rect, which is a position other
+   than the pixel-space mirror about that rect's diagonal.
+7. WHEN back-face coordinates are computed, THE Geometry_Module SHALL return exactly
+   `(columns + 1) · (rows + 1) · 2` finite entries, one coordinate pair per mesh vertex in
+   front-face vertex order, each entry within `[0, 1]`, and SHALL return each original
+   coordinate within `1 × 10⁻⁶` when the computation is applied to its own output.
+8. WHERE `columns` and `rows` are integers of at least `1` and at most `256`, WHEN
+   back-face coordinates are computed, THE Geometry_Module SHALL complete the computation
+   for each of the eight grab anchors, whether or not `columns` and `rows` are even.
+9. IF `columns` or `rows` is not an integer or is less than `1`, THEN THE Geometry_Module
+   SHALL reject the back-face coordinate request with an error naming the offending
+   dimension and SHALL return no partial coordinate data.
+10. WHEN a Paper_Turn_Renderer is constructed, THE Paper_Turn_Renderer SHALL compute
+    back-face coordinates exactly once from the resolved grab anchor and SHALL perform no
+    further back-face coordinate computation for the lifetime of that renderer instance.
 
 ### Requirement 11: Anchor exchange and destination-frame reflection
 
@@ -565,37 +613,53 @@ P1–P5.*
 
 1. WHERE any of the eight grab anchors is in effect, WHEN progress reaches `1`, THE
    Geometry_Module SHALL place each vertex at the reflection of its front-face coordinate
-   across that anchor's fold axis, mapped into the destination rect.
+   across that anchor's fold axis, mapped into the destination rect, to within `1e-6` CSS
+   pixels in each of `x` and `y`.
 2. WHERE any of the eight grab anchors is in effect, WHEN progress reaches `1`, THE
    Geometry_Module SHALL place the vertex at the grab anchor on the destination's pivot
-   anchor and the vertex at the pivot anchor on the destination's grab anchor.
+   anchor and the vertex at the pivot anchor on the destination's grab anchor, each to
+   within `1e-6` CSS pixels in each of `x` and `y`.
 3. WHERE any of the eight grab anchors is in effect, WHILE progress lies within `[0, 1]`,
    THE Geometry_Module SHALL place the two fold-axis endpoint vertices at their
-   corresponding anchor points on the base rect.
+   corresponding anchor points on the base rect with `z` of `0`, to within `1e-6` CSS
+   pixels in each of `x`, `y`, and `z`.
 4. WHEN progress is `0`, THE Geometry_Module SHALL place every vertex on the source rect
-   with `z = 0`, and WHEN progress is `1`, THE Geometry_Module SHALL place every vertex
-   on the destination rect with `z = 0`.
+   with `z` of `0`, and WHEN progress is `1`, THE Geometry_Module SHALL place every vertex
+   on the destination rect with `z` of `0`, each to within `1e-6` CSS pixels in each of
+   `x`, `y`, and `z`.
 5. THE Geometry_Module SHALL compute `lift` as `sin(π · eased)`, yielding exactly `0` at
-   progress `0` and `1`, and `1` at the midpoint, and SHALL hold `alpha` at `1`
-   throughout.
+   progress `0` and progress `1` and `1` at `eased` of `0.5` to within `1e-6`, and SHALL
+   hold `alpha` at exactly `1` for every progress within `[0, 1]`.
 6. WHERE any of the eight grab anchors is in effect, WHILE progress lies within `[0, 1]`,
-   THE Geometry_Module SHALL bound the position delta between adjacent mesh vertices that
-   straddle the fold axis by `C / min(meshColumns, meshRows)` for a constant `C`
-   independent of progress.
+   THE Geometry_Module SHALL bound the position delta in CSS pixels between any two
+   mesh-adjacent vertices that straddle the fold axis by `C / min(meshColumns, meshRows)`,
+   for a single constant `C` that depends only on the supplied source rect, destination
+   rect, and motion profile, and not on progress, on the grab anchor, or on position
+   within the mesh.
 7. THE Geometry_Module SHALL compute every deformation term from `acrossFold` and the
    ridge value alone, so that no branch of the per-vertex loop depends on the sign of
-   `acrossFold`.
+   `acrossFold` and no term is a step discontinuity at `acrossFold` of `0`.
 8. WHILE the per-vertex loop runs, THE Geometry_Module SHALL keep `acrossFold` within
-   `[−1, 1]` and `along / axisLength` within `[0, 1]` for every vertex written.
-9. THE Geometry_Module SHALL return `(meshColumns + 1) · (meshRows + 1) · 3` finite
-   position entries and one shade entry per vertex within `[FACING_FLOOR, 1]`.
-10. IF progress lies outside `[0, 1]`, THEN THE Geometry_Module SHALL clamp it into
-    `[0, 1]` and SHALL complete the frame.
-11. THE Geometry_Module SHALL leave the supplied source rect, destination rect, and
-    motion profile unmutated.
+   `[−1, 1]` and `along / axisLength` within `[0, 1]` for every vertex written, allowing
+   at most `1e-9` of floating-point slack beyond each bound.
+9. WHEN a frame is built with a finite progress value, THE Geometry_Module SHALL return
+   exactly `(meshColumns + 1) · (meshRows + 1) · 3` position entries and exactly
+   `(meshColumns + 1) · (meshRows + 1)` shade entries, with every position entry finite
+   and every shade entry within `[FACING_FLOOR, 1]` and neither `NaN` nor infinite.
+10. IF progress lies outside `[0, 1]`, THEN THE Geometry_Module SHALL clamp it to the
+    nearer of `0` and `1`, SHALL complete the frame without throwing, and SHALL return the
+    same frame values as for that clamped progress to within `1e-6` CSS pixels.
+11. THE Geometry_Module SHALL leave the supplied source rect, destination rect, and motion
+    profile unmutated, such that every member of each remains strictly equal to its value
+    before the call.
 12. THE Geometry_Module SHALL compute the base rect as `lerpRect(source, destination,
-    eased)` independently of the grab anchor, so the sheet footprint stays a growing
-    rectangle.
+    eased)` independently of the grab anchor, returning the same base rect for all eight
+    grab anchors given identical source rect, destination rect, progress, and motion
+    profile to within `1e-6` CSS pixels, so the sheet footprint stays a growing rectangle.
+13. WHEN a frame is built twice in succession with the same source rect, destination rect,
+    grab anchor, finite progress, and motion profile, THE Geometry_Module SHALL return
+    identical position, shade, `lift`, and `alpha` values, deriving them from its arguments
+    and its frozen module constants alone and retaining no state between invocations.
 
 ### Requirement 12: Even-mesh validation
 
@@ -609,25 +673,43 @@ loud.*
 #### Acceptance Criteria
 
 1. THE Profile_Validator SHALL require both `meshColumns` and `meshRows` to be even
-   integers, in addition to the existing positive-integer checks.
-2. IF `meshColumns` or `meshRows` is odd, THEN THE Profile_Validator SHALL throw an error
-   naming the offending field.
-3. THE Geometry_Module SHALL run the Profile_Validator when building a paper frame, and
-   THE Paper_Turn_Renderer SHALL run the Profile_Validator in its constructor.
+   integers of at least `2`, in addition to the existing positive-integer checks, and
+   SHALL apply that requirement unconditionally rather than only for the anchor resolved
+   on the current activation, since any of the eight anchors may be resolved at runtime.
+2. IF `meshColumns` or `meshRows` is odd, THEN THE Profile_Validator SHALL throw
+   synchronously with an error message that names each odd field, naming both fields when
+   both are odd.
+3. WHEN THE Geometry_Module builds a paper frame, THE Geometry_Module SHALL run the
+   Profile_Validator before computing any vertex, and WHEN THE Paper_Turn_Renderer is
+   constructed, THE Paper_Turn_Renderer SHALL run the Profile_Validator before allocating
+   any mesh, texture, or overlay resource.
 4. IF the Profile_Validator throws during renderer construction, THEN THE
-   Transition_Coordinator SHALL dispose the allocated resources and SHALL complete the
-   transition through the existing full-motion fallback.
-5. WHEN a grab anchor, a column count, and a row count are supplied, THE Geometry_Module
-   SHALL return an integer vertex index within
-   `[0, (columns + 1) · (rows + 1))` addressing the vertex whose coordinate equals that
-   anchor's unit-square coordinate.
+   Transition_Coordinator SHALL dispose every resource allocated for that activation,
+   SHALL complete the transition through the existing full-motion fallback within the
+   same activation without rethrowing to the activation path, and SHALL leave no hidden
+   card and no orphaned overlay.
+5. WHERE `columns` and `rows` are integers of at least `1`, WHEN a grab anchor, a column
+   count, and a row count are supplied, THE Geometry_Module SHALL return an integer
+   vertex index within `[0, (columns + 1) · (rows + 1))` addressing the vertex whose
+   unit-square coordinate equals that anchor's unit-square coordinate.
 6. IF `uv.x · columns` or `uv.y · rows` is not an integer for the requested anchor, THEN
-   THE Geometry_Module SHALL throw an error naming the anchor and the offending
-   dimension.
+   THE Geometry_Module SHALL throw an error message naming the anchor and the offending
+   dimension, rejecting only that unrepresentable half-step.
 7. THE Geometry_Module SHALL return a vertex index for a corner anchor with any positive
-   integer column and row counts, including odd ones.
+   integer column and row counts, including odd ones, since a corner's unit-square
+   components are each exactly `0` or `1`.
 8. THE Motion_Profile SHALL declare `meshColumns` of `20` and `meshRows` of `14`, both
-   even, and SHALL document both fields as constrained to even numbers.
+   even, SHALL document both fields as constrained to even numbers, and SHALL pass the
+   Profile_Validator without throwing.
+9. WHERE `meshColumns` and `meshRows` are both even integers of at least `2`, WHEN any of
+   the eight grab anchors is supplied with those dimensions, THE Geometry_Module SHALL
+   return a vertex index without throwing.
+10. IF `columns` or `rows` is not an integer of at least `1`, THEN THE Geometry_Module
+    SHALL throw an error message naming the offending dimension and SHALL return no
+    vertex index.
+11. IF the Profile_Validator throws while a paper frame is being built, THEN THE
+    Geometry_Module SHALL propagate that error before writing any position or shade entry
+    and SHALL leave the supplied profile, source rect, and destination rect unmutated.
 
 ### Requirement 13: Reveal clip totality and closed-clip agreement
 
@@ -639,32 +721,56 @@ progress and the coordinator's closed clip matches the sheet's first frame.
 
 #### Acceptance Criteria
 
-1. THE Geometry_Module SHALL measure the reveal sweep by a fold-basis distance that is
-   `0` at the grab anchor and `2` at the pivot anchor, with level sets parallel to the
-   fold axis.
-2. WHERE any of the eight grab anchors is in effect, WHEN progress lies within `(0, 1]`,
-   THE Geometry_Module SHALL return a reveal polygon with at least three points.
-3. WHERE any of the eight grab anchors is in effect, WHEN progress increases, THE
-   Geometry_Module SHALL return a reveal polygon whose covered area is non-decreasing.
-4. WHEN progress is `1`, THE Geometry_Module SHALL return a reveal polygon equal to the
-   full destination rectangle for every one of the eight anchors.
-5. WHEN the grab anchor is a corner, THE Geometry_Module SHALL return the same reveal
-   polygon as the current L1-distance sweep for every progress value.
-6. WHEN the grab anchor is `top-center`, THE Geometry_Module SHALL return a reveal front
-   that grows downward as a horizontal band parallel to the fold axis.
-7. WHEN two adjacent rect corners differ in insideness, THE Geometry_Module SHALL
-   interpolate the crossing point using their differing sweep distances, so the
-   interpolation denominator stays non-zero.
-8. WHEN a grab anchor is supplied, THE Transition_Coordinator SHALL derive the closed
-   clip from that anchor's unit-square coordinate as a degenerate three-point polygon
-   expressed in percentages, through a table-driven lookup.
-9. WHERE any of the eight grab anchors is in effect, THE Transition_Coordinator SHALL
-   produce a closed clip equal to the reveal clip path for the same anchor at progress
-   `0`.
-10. WHILE progress is below `1`, THE Geometry_Module SHALL return as the frame's reveal
-    clip the degenerate triangle at the grab anchor point on the base rect, and WHEN
-    progress reaches `1`, THE Geometry_Module SHALL return the full destination
-    rectangle.
+1. WHEN a rect, a grab anchor, and a progress value are supplied, THE Geometry_Module
+   SHALL measure the reveal sweep at each rect corner in unit-square coordinates by the
+   fold-basis distance `(maxPerp − perp) / maxPerp`, where `perp` is the corner's signed
+   perpendicular offset from the fold-basis origin along the fold-basis normal, so that
+   the distance is exactly `0` at the grab anchor, exactly `1` on the fold axis, exactly
+   `2` at the pivot anchor, and constant along every line parallel to the fold axis.
+2. WHEN a rect, a grab anchor, and a progress value are supplied, THE Geometry_Module
+   SHALL classify a rect corner as inside the reveal front when its fold-basis distance is
+   at most `progress · 2`.
+3. WHERE any of the eight grab anchors is in effect, WHEN progress lies within `(0, 1]`,
+   THE Geometry_Module SHALL return a reveal polygon of at least `3` and at most `5`
+   finite points, including for an edge-midpoint anchor at every progress within
+   `(0, 0.25)`, where no rect corner is inside the reveal front.
+4. WHERE any of the eight grab anchors is in effect, WHEN two progress values `p1` and
+   `p2` with `0 ≤ p1 < p2 ≤ 1` are supplied, THE Geometry_Module SHALL return reveal
+   polygons whose covered areas satisfy `area(p1) ≤ area(p2)`, with the region covered at
+   `p1` contained in the region covered at `p2`.
+5. WHEN progress is `1`, THE Geometry_Module SHALL return a reveal polygon equal to the
+   four corners of the supplied rect for every one of the eight anchors, since the maximum
+   fold-basis distance of `2` is covered by the threshold `progress · 2` at that progress.
+6. WHERE the grab anchor is one of the four corners, WHEN any progress within `[0, 1]` is
+   supplied, THE Geometry_Module SHALL return a reveal polygon whose point count and point
+   coordinates equal those of the pre-existing L1-distance sweep within a tolerance of
+   `1 × 10⁻⁶` CSS pixels per coordinate, since the fold-basis distance is algebraically
+   identical to that L1 expression for every corner anchor.
+7. WHEN the grab anchor is `top-center` and a progress value within `[0, 1]` is supplied,
+   THE Geometry_Module SHALL return a reveal polygon covering the band from the rect's top
+   edge down to a front parallel to the fold axis at a distance of `progress` times the
+   rect height from that top edge, within floating-point tolerance.
+8. WHEN two adjacent rect corners differ in insideness, THE Geometry_Module SHALL
+   interpolate the crossing point using their differing fold-basis distances, whose
+   difference is non-zero, so that the interpolation denominator is never `0` and every
+   returned point is finite.
+9. IF the progress supplied for a reveal clip is non-finite or lies outside `[0, 1]`, THEN
+   THE Geometry_Module SHALL clamp it into `[0, 1]`, SHALL return a polygon meeting the
+   point-count bounds of this requirement, and SHALL complete without throwing.
+10. WHEN progress is `0`, THE Geometry_Module SHALL return a reveal polygon of exactly `3`
+    coincident points located at the grab anchor point on the supplied rect.
+11. WHEN a grab anchor is supplied, THE Transition_Coordinator SHALL derive the closed clip
+    from that anchor's unit-square coordinate through a table-driven lookup over the eight
+    anchors, as a polygon of exactly `3` coincident points expressed in percentages equal
+    to that coordinate's components multiplied by `100`.
+12. WHERE any of the eight grab anchors is in effect, THE Transition_Coordinator SHALL
+    produce a closed clip whose three points, resolved against the destination rect,
+    coincide with the three points of the reveal clip path for the same anchor at progress
+    `0` within a tolerance of `1 × 10⁻⁶` CSS pixels per coordinate.
+13. WHILE progress is below `1`, THE Geometry_Module SHALL return as the frame's reveal
+    clip a polygon of exactly `3` coincident points at the grab anchor point on the base
+    rect, and WHEN progress reaches `1`, THE Geometry_Module SHALL return the four corners
+    of the destination rect.
 
 ### Requirement 14: Resolved anchor diagnostics
 
@@ -676,13 +782,26 @@ interaction tests.*
 
 #### Acceptance Criteria
 
-1. WHEN the overlay is created, THE Paper_Turn_Renderer SHALL publish the resolved grab
-   anchor as a dataset attribute on the overlay element, alongside the existing mesh
-   vertex count and progress attributes.
-2. THE Paper_Turn_Renderer SHALL publish the anchor value as one of the eight anchor
-   string literals.
+1. WHEN the overlay element is created, THE Paper_Turn_Renderer SHALL set
+   `overlay.dataset.grabAnchor` to the grab anchor resolved for that activation, retaining
+   the existing mesh-vertex-count and progress dataset attributes on the same element.
+2. THE Paper_Turn_Renderer SHALL publish the anchor value as exactly one of the eight
+   anchor string literals `top-left`, `top-center`, `top-right`, `middle-right`,
+   `bottom-right`, `bottom-center`, `bottom-left`, `middle-left`, with no leading or
+   trailing whitespace and no other value.
 3. THE Paper_Turn_Renderer SHALL expose the resolved anchor through the overlay dataset
-   only, adding no debug-panel user interface.
+   only, adding no debug-panel user interface and no second DOM element, attribute, or
+   other output carrying the anchor.
+4. WHEN the overlay element is attached to the document, THE Paper_Turn_Renderer SHALL
+   have set `overlay.dataset.grabAnchor` before the first animation frame of the
+   transition, so that a browser interaction test reading the attribute at any time after
+   activation observes the resolved anchor without inspecting rendered pixels.
+5. WHILE the overlay element remains in the document, THE Paper_Turn_Renderer SHALL keep
+   `overlay.dataset.grabAnchor` equal to the anchor resolved at activation, changing it
+   neither as the progress attribute advances from `0` to `1` nor on viewport change.
+6. IF the transition completes through the existing fallback path so that no overlay
+   element is created, THEN THE Paper_Turn_Renderer SHALL publish no grab-anchor dataset
+   attribute anywhere in the document.
 
 ### Requirement 15: Preservation of existing contract guarantees
 
@@ -694,34 +813,50 @@ selection and axis choice.
 
 #### Acceptance Criteria
 
-1. THE Geometry_Module SHALL hold reveal progress at `0` until the eased progress reaches
-   `1`, so that the sheet performs the reveal.
-2. WHILE a turn is in progress, THE Transition_Coordinator SHALL keep the destination DOM
-   fully covered until the sheet lands.
-3. THE Transition_Coordinator SHALL reveal the destination through the sheet alone,
-   presenting no independent background wipe and no flat panel of page content.
-4. THE Paper_Turn_Renderer SHALL gate the contact shadow on the anchor-independent `lift`
-   value through the existing shadow lift scale.
-5. WHEN progress reaches its midpoint, THE Geometry_Module SHALL produce a curved
-   cross-section whose bulge scales with `maxPerp`, so that a midline fold bulges by the
-   same fraction of its half-width as a diagonal fold.
-6. THE Geometry_Module SHALL preserve the `sin(π/2 · acrossFold)` deformation form, so
-   the sheet stays continuous across the fold axis.
-7. THE Paper_Turn_Renderer SHALL print both faces of the sheet and SHALL degrade the
-   reverse face to paper white through the existing back-texture mix behavior.
+1. WHERE any of the eight grab anchors is in effect, WHILE eased progress is strictly
+   below `1`, THE Geometry_Module SHALL return a reveal progress of exactly `0`, and WHEN
+   eased progress reaches `1`, THE Geometry_Module SHALL return a reveal progress of
+   exactly `1`, so that the sheet itself performs the reveal.
+2. WHERE any of the eight grab anchors is in effect, WHILE progress lies within `[0, 1)`,
+   THE Transition_Coordinator SHALL keep `100` percent of the destination rect area
+   covered, and WHEN progress reaches `1`, THE Transition_Coordinator SHALL uncover the
+   destination rect on that final frame.
+3. WHILE a turn is in progress, THE Transition_Coordinator SHALL present exactly one
+   reveal surface, the sheet, and SHALL render no independent background wipe and no flat
+   panel of page content outside the sheet footprint.
+4. WHERE any of the eight grab anchors is in effect, THE Paper_Turn_Renderer SHALL derive
+   the contact shadow from the anchor-independent `lift` value through the existing
+   shadow lift scale alone, yielding zero shadow contribution at `lift = 0` and equal
+   shadow output for every anchor at equal `lift` within floating-point tolerance.
+5. WHEN eased progress reaches its midpoint, THE Geometry_Module SHALL produce a
+   cross-section whose peak perpendicular displacement divided by `maxPerp` is equal for a
+   midline fold and a diagonal fold within floating-point tolerance, so that a midline
+   fold bulges by the same fraction of its half-width as a diagonal fold.
+6. WHERE any of the eight grab anchors is in effect, THE Geometry_Module SHALL preserve
+   the `sin(π/2 · acrossFold)` deformation form unchanged, so the sheet stays continuous
+   across the fold axis.
+7. WHERE any of the eight grab anchors is in effect, THE Paper_Turn_Renderer SHALL print
+   both faces of the sheet and SHALL degrade the reverse face toward paper white through
+   the existing back-texture mix behavior, applying the same mix values for every anchor.
 8. THE Transition_Coordinator SHALL preserve the existing capture fidelity and Spectrum
-   token inlining behavior.
-9. THE Transition_Coordinator SHALL preserve the existing accessibility behavior,
-   including background inertness, focus handling, and scroll freeze and restore.
+   token inlining behavior unchanged, producing captures indistinguishable from the
+   pre-feature behavior under the existing capture baselines.
+9. WHILE a turn is in progress, THE Transition_Coordinator SHALL keep the background
+   inert and scrolling frozen, and WHEN the turn completes or is aborted, THE
+   Transition_Coordinator SHALL restore the pre-activation scroll offset to within `1`
+   CSS pixel and SHALL return focus to the activating trigger, unchanged from the existing
+   behavior.
 10. WHERE reduced motion is requested or required capabilities are absent, WHEN a tile is
     activated, THE Transition_Coordinator SHALL complete the transition through the
-    existing fallback path without consulting the grab anchor.
-11. IF any step of the turn fails, THEN THE Transition_Coordinator SHALL leave no hidden
-    card and no orphaned overlay, using the existing recovery paths.
-12. THE Paper_Turn_Renderer SHALL keep the mesh within the existing mobile budget of
-    `315` vertices and a canvas within twice the viewport.
-13. THE Transition_Coordinator SHALL leave its state machine, cleanup, and fallback paths
-    unchanged by this feature.
+    existing fallback path and SHALL read no grab anchor on that path.
+11. IF any step of the turn fails, THEN THE Transition_Coordinator SHALL complete through
+    the existing recovery paths, leaving zero cards in a hidden state and zero overlay
+    elements attached to the document.
+12. WHERE the mobile configuration is in effect, THE Paper_Turn_Renderer SHALL allocate at
+    most `315` mesh vertices and a canvas no larger than twice the viewport width and
+    twice the viewport height.
+13. THE Transition_Coordinator SHALL expose the same set of states, transitions, cleanup
+    steps, and fallback paths as before this feature, adding none and removing none.
 
 ### Requirement 16: Performance envelope and dependency budget
 
@@ -733,20 +868,49 @@ frame, so that adding position awareness does not cost frame budget.
 #### Acceptance Criteria
 
 1. WHEN a tile is activated, THE Activation_Handler SHALL perform exactly one layout
-   measurement pass over the tile list, of cost linear in the number of tiles.
-2. THE Geometry_Module SHALL read no layout inside the frame loop.
-3. THE Anchor_Resolver SHALL resolve an anchor using arithmetic plus one sort of the
-   measured values per axis.
-4. THE Paper_Turn_Renderer SHALL leave mesh density, texture device-pixel-ratio handling,
-   and pixel caps at their current values.
-5. THE Build_Configuration SHALL declare the same runtime and development dependencies as
-   before this feature.
-6. THE Unit_Test_Suite SHALL establish the anchor properties by exhaustive enumeration
-   over the eight anchors and over grid shapes with `rowCount` and `columnCount` within
-   `[1, 8]`, and SHALL establish the aspect-ratio property through a deterministic sweep
-   driven by a seeded generator.
-7. THE Visual_Regression_Suite SHALL add baselines for a midline fold at peak curl and
-   mid-turn, and SHALL retain the existing corner-turn baselines.
+   measurement pass over the `[data-card-trigger]` tile list, reading each tile's
+   bounding rect exactly once, at a cost linear in the number of measured tiles, and
+   SHALL complete that pass within the same frame in which the activation occurs and
+   before the first animation frame of the transition.
+2. WHILE a transition is in progress, THE Activation_Handler SHALL perform no further
+   layout measurement pass, so that the total number of measurement passes per activation
+   is exactly one regardless of transition duration or frame count.
+3. WHILE the frame loop runs, THE Geometry_Module SHALL read no DOM layout and SHALL
+   derive every per-frame value from the source rect, the destination rect, the motion
+   profile, the resolved grab anchor, and the progress argument alone.
+4. WHEN an anchor is resolved for one activation, THE Anchor_Resolver SHALL perform at
+   most one sort per axis — at most two sorts per activation — over the measured values,
+   plus constant-time arithmetic per tile, and SHALL retain no state after returning.
+5. THE Paper_Turn_Renderer SHALL keep mesh density at `meshColumns` of `20` and
+   `meshRows` of `14`, SHALL keep texture device-pixel-ratio handling unchanged, and
+   SHALL keep the existing pixel caps unchanged, namely a mobile mesh budget of `315`
+   vertices and a canvas no larger than twice the viewport in each dimension.
+6. THE Build_Configuration SHALL declare exactly the same set of runtime dependencies and
+   the same set of development dependencies, at the same pinned versions, as before this
+   feature, adding no property-testing library and no other new package.
+7. THE Unit_Test_Suite SHALL establish the anchor properties by exhaustive enumeration
+   over all `8` grab anchors and over all `64` grid shapes with `rowCount` and
+   `columnCount` each in `[1, 8]`, covering every cell of every shape — `1,296`
+   shape-and-cell combinations in total — with no randomized sampling of anchors, shapes,
+   or cells.
+8. THE Unit_Test_Suite SHALL establish the arbitrary-aspect-ratio property through a
+   deterministic sweep driven by a seeded generator using a fixed seed and a fixed
+   iteration count of at least `200` rect pairs, with widths and heights independently
+   sampled from `[1, 4096]` CSS pixels, so that a repeated run evaluates the identical
+   sequence of rect pairs.
+9. IF an enumerated or swept case fails, THEN THE Unit_Test_Suite SHALL report the
+   failing grab anchor and the failing grid shape or rect pair as supplied, so that the
+   case is reproducible from the report alone without counterexample shrinking.
+10. THE Visual_Regression_Suite SHALL add exactly two Chromium-desktop baselines for a
+    midline fold — one at peak curl and one at mid-turn — and SHALL keep the four existing
+    corner-turn checkpoints and their names, comparing against the suite's existing pixel
+    tolerance. WHERE the demo tile a corner checkpoint activates now resolves a different
+    grab anchor than the corner `main.ts` previously hardcoded, THE Visual_Regression_Suite
+    SHALL have that checkpoint's baseline regenerated at the resolved anchor and reviewed by
+    eye, since the checkpoint drives the production activation path and pins no anchor.
+    Corner-geometry parity SHALL be carried instead by the unit-level golden comparison
+    against pre-feature vertex positions and reveal polygon, together with a fixed-anchor
+    frame comparison, rather than by a baseline byte comparison.
 
 ---
 
@@ -771,7 +935,7 @@ For all anchors in `A`, all rect pairs in `R`, and all mesh vertices `(u, v)`: a
 rect. This subsumes the legacy "the other corners stay put" claim, which is false for a
 midline fold.
 
-**Validates: Requirements 9.12, 10.1, 10.2, 10.4, 10.5, 11.1**
+**Validates: Requirements 9.12, 10.1, 10.2, 10.5, 10.7, 11.1**
 
 ### Property 2 — Anchor exchange
 
@@ -812,7 +976,7 @@ heights: the `progress = 1` landing positions match the closed-form pixel-space 
 about the destination rect's centerline within floating-point tolerance. Corner anchors
 are deliberately exempt in pixel space — that is the bowtie the contract rules out.
 
-**Validates: Requirements 10.1, 10.2, 10.3, 10.4**
+**Validates: Requirements 10.1, 10.2, 10.3, 10.4, 10.5**
 
 ### Property 7 — Resolution is total
 
@@ -855,7 +1019,7 @@ For all anchors in `A`: the coordinator's closed clip equals the reveal clip pat
 same anchor at `progress = 0`, so the `preparing` clip and the sheet's opening frame
 cannot disagree.
 
-**Validates: Requirements 13.8, 13.9, 13.10**
+**Validates: Requirements 13.11, 13.12, 13.13**
 
 ### Property 12 — Reveal sweep is total and monotone
 
@@ -864,7 +1028,7 @@ at least three finite points, whose covered area is non-decreasing in progress, 
 equals the full rectangle at `progress = 1`. Corner anchors reproduce the current L1
 sweep exactly.
 
-**Validates: Requirements 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7**
+**Validates: Requirements 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 13.8**
 
 ### Property 13 — Opposite is an involution and family-preserving
 
@@ -890,12 +1054,12 @@ suite itself — none of which gain from many randomized iterations.
 
 | Criteria | Test type | Rationale |
 | --- | --- | --- |
-| 1.1, 1.7, 9.11, 12.4, 16.4 | Example / configuration | Closed-set membership and named constant values; one assertion each. |
-| 5.7, 8.3, 8.4, 9.10, 14.3, 15.13, 16.3, 16.5, 16.6 | Smoke / review | Architectural and deletion claims, compile-time renames, dependency and suite structure. |
-| 6.1, 6.3, 7.1, 7.2, 7.3, 7.4, 7.5, 16.1, 16.2 | Integration | Live layout reads, activation wiring, viewport-driven resolution, frame-loop discipline. |
-| 7.6, 7.7, 9.7, 9.8, 9.9, 10.6, 10.7, 13.6, 14.1, 14.2 | Example / edge case | Single scenarios, basis-construction postconditions over the eight-value domain, one-shot renderer side effects. |
+| 1.1, 1.7, 9.11, 10.6, 12.4, 13.2, 16.5 | Example / configuration | Closed-set membership and named constant values; one assertion each. |
+| 5.7, 8.3, 8.4, 9.10, 14.3, 15.13, 16.4, 16.6, 16.7, 16.8 | Smoke / review | Architectural and deletion claims, compile-time renames, dependency and suite structure. |
+| 6.1, 6.3, 7.1, 7.2, 7.3, 7.4, 7.5, 16.1, 16.2, 16.3 | Integration | Live layout reads, activation wiring, viewport-driven resolution, frame-loop discipline. |
+| 7.6, 7.7, 9.7, 9.8, 9.9, 9.13, 9.14, 9.15, 10.8, 10.9, 10.10, 11.13, 12.9, 12.10, 12.11, 13.7, 13.9, 13.10, 14.1, 14.2, 14.4, 14.5, 14.6, 16.9 | Example / edge case | Single scenarios, basis-construction postconditions over the eight-value domain, one-shot renderer side effects. |
 | 8.1, 8.2 | Property over the removed attribute | Swept over all eight attribute values to confirm the override is inert. |
-| 15.2, 15.3, 15.8, 15.9, 15.11, 15.12, 16.7 | Integration / visual | Preserved contract guarantees already covered by the existing browser, capture, and baseline suites, plus the new midline baselines. |
+| 15.2, 15.3, 15.8, 15.9, 15.11, 15.12, 16.10 | Integration / visual | Preserved contract guarantees already covered by the existing browser, capture, and baseline suites, plus the new midline baselines. |
 | 15.4, 15.7, 15.10 | Example | Anchor-independent existing behavior at representative progress values. |
 | 15.5 | Property | Metamorphic comparison of peak bulge between the two axis families, normalized by `maxPerp`. |
 

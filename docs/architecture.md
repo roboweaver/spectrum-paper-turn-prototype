@@ -14,6 +14,7 @@ the few hundred milliseconds a card is turning into a page.
 
 ```
 main.ts
+  ├── grab-anchor ────────── measured tile rects → the grab anchor
   └── app.ts ─────────────── builds the Spectrum list + detail DOM
         └── TransitionCoordinator ── owns the lifecycle and all cleanup
               ├── DomTransitionView ─ every DOM mutation the transition makes
@@ -31,7 +32,8 @@ main.ts
 | --- | --- |
 | `transition-coordinator.ts` | State machine, overlap prevention, scroll freeze, focus, inertness, failure recovery. The only module allowed to decide *what happens next*. |
 | `dom-transition-view.ts` | The single seam through which the transition touches the DOM. Keeps the coordinator testable without a browser. |
-| `geometry.ts` | Pure functions. Given two rects, a corner, and progress, returns a `PaperFrame`. No DOM, no WebGL, no time. |
+| `grab-anchor.ts` | Pure functions. Given the measured tile rects and the index of the activated tile, returns the anchor the sheet is grabbed by — one of four corners or four edge midpoints. No DOM, no clock, never throws. |
+| `geometry.ts` | Pure functions. Given two rects, an anchor, and progress, returns a `PaperFrame`. No DOM, no WebGL, no time. |
 | `paper-turn-renderer.ts` | Three.js overlay lifecycle: canvas, camera, mesh, texture, shadow, disposal. Translates a `PaperFrame` into GPU state. |
 | `paper-shaders.ts` | Front/reverse face selection, both printed faces, facing-based highlight, sheet fade. |
 | `capture.ts` | `html-to-image` capture with DPR and pixel-area caps from the profile, and Spectrum token inlining so the detached clone keeps its theme. |
@@ -41,6 +43,48 @@ main.ts
 
 Dependencies are deliberately few: `three` for the mesh, `html-to-image` for the
 texture, and Spectrum Web Components for the UI. Nothing else.
+
+## Resolving the grab anchor
+
+Which anchor a card is grabbed by is not authored. It is derived from where the
+tile actually sits in the grid at the moment of activation: a top-left tile is
+grabbed by its top-left corner, a middle-row edge tile by the edge midpoint on
+its own side, and so on across the eight anchors. `main.ts` measures every
+`[data-card-trigger]` rect once and calls `resolveGrabAnchor(rects, index)`
+before the first frame; nothing re-measures while the transition runs.
+
+**The grid shape comes from clustering, not from CSS.** The layout is
+`repeat(auto-fit, minmax(...))`, so `grid-template-columns` resolves to a track
+list whose length depends on the viewport, and parsing it would mean re-deriving
+the browser's own placement algorithm. Instead `gridPositionFromRects()` clusters
+the measured `top` values into rows and the `left` values into columns.
+Unmeasurable tiles — zero width or height, non-finite edges — are filtered out
+first so they invent no phantom rows.
+
+`clusterAxis()` compares each candidate against the **smallest** value of the
+cluster under construction, not against the previous value. Chaining off the
+previous value lets a long run of tiles each drifting by the tolerance merge
+into one cluster, which would collapse a real grid into a single row.
+
+The module is total by construction: an empty rect list, an out-of-range index,
+or an unmeasurable activated rect collapses to `SINGLE_TILE_ANCHOR`
+(`bottom-right`) rather than failing the activation.
+
+**Even mesh dimensions are now a constraint, not a coincidence.** An edge
+midpoint has a `uv` component of exactly `0.5`, which only lands on a real mesh
+vertex when the corresponding dimension is even. `meshColumns` and `meshRows` are
+therefore required to be even integers of at least `2`, and `validateProfile()`
+enforces it unconditionally — any of the eight anchors may be resolved at
+runtime, so the check cannot wait for one. The shipped `20 × 14` already
+satisfies it; a unit test asserts that, so a future tuning change trips a named
+test rather than a runtime throw.
+
+**Diagnostic.** The renderer writes the resolved anchor to
+`overlay.dataset.grabAnchor` once, before the first frame, alongside the existing
+`data-mesh-vertices` and `data-progress`. That is the only DOM carrier of the
+anchor and exists so browser and visual tests can assert the resolution without
+inspecting pixels — the midline visual checkpoints read it to prove they are
+still covering a midline fold at all.
 
 ## The geometry model
 
@@ -63,7 +107,28 @@ halfway point, and can never resolve into the destination rectangle.
 So `foldBasis()` works entirely in **normalized card space** — the unit square —
 where reflection across the diagonal maps `(u, v) → (v, u)` exactly. The rotated
 result is mapped back out through `baseRect`. Because of this, `foldBasis()`
-takes only a `Corner`; it never sees a rectangle.
+takes only a `GrabAnchor`; it never sees a rectangle.
+
+### Two axis families
+
+There are two kinds of fold axis, held in a frozen `FOLD_AXIS` table keyed by
+anchor:
+
+| Family | Anchors | Axis in unit-square coordinates |
+| --- | --- | --- |
+| Diagonal | the four corners | main diagonal `(0,0)–(1,1)` or anti-diagonal `(0,1)–(1,0)` |
+| Midline | the four edge midpoints | horizontal `(0,0.5)–(1,0.5)` or vertical `(0.5,0)–(0.5,1)` |
+
+An anchor and its opposite share one table entry; the normal's
+auto-orientation toward the grabbed anchor is what gives them opposite normals.
+
+The normalization argument above is specifically a *diagonal* problem. A midline
+**is** a symmetry axis of any rectangle, so a half-turn about it maps
+`(u, v) → (u, 1 − v)` and lands exactly on the mirrored position in pixel space
+too, at any aspect ratio — there is no bowtie to avoid. The midline case runs in
+normalized card space anyway, purely so there is **one** deformation path rather
+than two: every anchor produces the same `FoldBasis` shape, and the per-vertex
+loop reads only that basis and never the axis kind.
 
 `baseRect` is `lerpRect(source, destination, eased)` — always a proper
 rectangle, growing from the card to the viewport. The sheet therefore *becomes*
@@ -87,6 +152,16 @@ For each mesh vertex, in unit-square coordinates:
 grabbed half **leads** and the tucked half **lags**, so the surface is curved
 through the whole turn. Because the offset is scaled by `lift`, it vanishes at
 both endpoints and the sheet lands flat and exact.
+
+`maxPerp` and `axisLength` differ by axis family — `1/√2` and `√2` for a
+diagonal, `0.5` and `1` for a midline — and that is exactly why nothing above
+needs a per-family branch. Both are divided out before use: `acrossFold` is
+`perp / maxPerp` in `[-1, 1]`, and `ridge` reads `along / axisLength` in `[0, 1]`.
+Every downstream term therefore sees the same two ranges whichever axis was
+chosen, so `ARC_BULGE`, `foldSoftness`, and the rest of the `MotionProfile`
+tunables need no retuning for the midline family. A metamorphic unit test pins
+that down: at the eased midpoint, peak perpendicular displacement divided by
+`maxPerp` is equal for a midline fold and a diagonal fold.
 
 `depth` is negative on the tucked half, so that corner genuinely curls
 *underneath* the leading half rather than swinging around it. A small
@@ -124,6 +199,21 @@ shapes. Two earlier versions of the reveal both failed for that reason:
   *shape*, so it showed as a pale panel that was not part of the fold and that
   hid the rest of the card list behind it.
 
+The sweep itself is stated in terms of the fold basis rather than the anchor's
+coordinates. `frontDistance(basis, u, v) = (maxPerp − perp) / maxPerp` is `0` at
+the grab anchor, `1` everywhere on the fold axis, and `2` at the pivot anchor,
+and is constant along every line parallel to the fold. `clipViewport()` compares
+it against `threshold = progress * 2`.
+
+This replaced an L1 metric, `|u − gx| + |v − gy|`. For every corner anchor the two
+are algebraically identical — for `top-right` both reduce to `1 − u + v` — so
+corner reveal output is unchanged to the bit. For an edge midpoint the L1 form was
+outright broken: under `top-center` it left all four rect corners outside the
+front for any progress below `0.25` and emitted a `polygon()` with no points,
+which is invalid CSS. `frontDistance` reduces to `2v` there, a band growing
+downward from the top edge, and always yields between three and five finite
+points.
+
 Letting the sheet tell the whole story removes the class of bug rather than
 tuning it. At progress 1 the sheet's geometry equals the destination rect
 exactly, so the handoff from texture to real DOM lands pixel-for-pixel and is
@@ -138,8 +228,10 @@ an anonymous grey field and the direction of the turn was ambiguous.
 ### Constants
 
 `PERSPECTIVE_STRENGTH`, `FACING_FLOOR`, and `ARC_BULGE` are module constants in
-`geometry.ts`; `SHADOW_LIFT_SCALE` is one in the renderer. They describe the *shape of the
-motion model* rather than a design-tunable knob, and promoting them to
+`geometry.ts`; `SHADOW_LIFT_SCALE` is one in the renderer; `GRID_CLUSTER_TOLERANCE_PX`
+is one in `grab-anchor.ts`. They describe the *shape of the
+motion model* — or, for the tolerance, a measurement artifact of the layout
+engine — rather than a design-tunable knob, and promoting them to
 `MotionProfile` would widen a required interface that four test suites construct
 literals for. `MotionProfile` remains the place for anything a designer would
 plausibly want to change.
@@ -175,10 +267,11 @@ perp   = offset · basis.normal
 backUv = basis.origin + along * axis - perp * normal
 ```
 
-For `top-right` this reduces to `(u, v) → (v, u)`. Sanity check: the card's
-top-right UV `(1, 0)` maps to the page's bottom-left `(0, 1)`, which is exactly
-where that vertex lands at progress 1. The reflection depends only on the grabbed
-corner, so it is computed **once at construction**, not per frame.
+For `top-right` this reduces to `(u, v) → (v, u)`; for `top-center` to
+`(u, v) → (u, 1 − v)`. Sanity check: the card's top-right UV `(1, 0)` maps to the
+page's bottom-left `(0, 1)`, which is exactly where that vertex lands at progress
+1. The reflection depends only on the grabbed anchor, so it is computed **once at
+construction**, not per frame.
 
 The shader carries a second sampler and a `backTextureMix` flag. When the
 destination capture fails, `backTextureMix` is `0` and the reverse falls back to
@@ -285,14 +378,51 @@ resolution is a deliberate, visible decision rather than a drift.
 | --- | --- | --- |
 | Unit | `npm run test:unit` | Geometry invariants, coordinator states, capture caps, capability selection, timeline, fallback, DOM view. |
 | Interaction | `npm run test:e2e` | Mouse/touch/keyboard, Escape, resize, successive cards, inertness, focus, reduced motion, mobile budgets. |
-| Visual | `npm run test:visual` | Start, peak curl, diagonal midpoint, settled page. |
+| Visual | `npm run test:visual` | Start, peak curl, diagonal midpoint, settled page, plus midline peak curl and midpoint. |
 
-Geometry is tested as pure functions on invariants — corner exchange in
-destination space, fold-axis corners held still, flatness at both endpoints,
-monotonic growth, the destination staying covered until the sheet lands — rather than by
-snapshotting coordinates. That keeps the suite meaningful while the motion is
-still being tuned.
+Geometry is tested as pure functions on invariants — rather than by snapshotting
+coordinates — which keeps the suite meaningful while the motion is still being
+tuned. The load-bearing one is the **destination-frame reflection**: at progress 1
+every mesh vertex lands at the unit-square reflection about its fold axis, mapped
+through the destination rect. That single property subsumes the older claims it
+replaced — anchor exchange in destination space, fold-axis corners held still,
+and "the other corners stay put" — and unlike them it is true for both axis
+families. The narrower version was not just incomplete but false for a midline
+fold: under a `top-center` fold the top-left vertex lands on bottom-left, not on
+itself. Alongside it: flatness at both endpoints, monotonic growth, continuity
+across the fold axis, the destination staying covered until the sheet lands, and
+the resolution table checked against an independently written expectation over
+all 64 grid shapes and every cell of each.
 
 Visual baselines are Chromium-desktop on Darwin only; the visual suite skips
 elsewhere. They must be regenerated whenever the intended motion changes, and
 reviewed by eye rather than merely accepted.
+
+The two midline checkpoints run at a 400px viewport on tile 1, not at the corner
+suite's 1280px. With only three tiles, a tile resolving `top-center` is reachable
+in exactly one shape: the single column of three rows the grid collapses to below
+its 600px breakpoint, where the interior tile is the row centre. At 1280px the
+three tiles form a single row and no tile resolves `top-center` at all. Their
+screenshots are therefore a different size from the corner baselines, which is
+fine — they are new names with no prior baseline to match.
+
+The four corner baselines must themselves be regenerated and reviewed by eye.
+`main.ts` used to hardcode `top-right` for every tile; tile 0 at the corner
+suite's 1280×900 viewport now measures into a 1 × 3 grid and resolves through the
+degenerate single-row rule to `bottom-left`. So `paper-turn-peak-curl` and
+`paper-turn-diagonal-midpoint` legitimately change — a deliberate
+product-behavior change, not geometry drift — while `paper-turn-start` and
+`paper-turn-settled` are expected to be unaffected, at zero lift with the overlay
+gone, and should be confirmed rather than assumed. The evidence that corner
+*geometry* is unchanged is the corner-parity golden test in
+`tests/unit/geometry.test.ts` — pre-feature vertex positions within `1e-4` CSS
+pixels and the reveal polygon within `1e-6` — not a PNG byte comparison.
+
+The two Linux counterparts of those changed frames were deleted rather than
+regenerated: Linux baselines only ever come from the `update-visual-baselines`
+workflow on an ubuntu runner, never from a Darwin machine. Until that artifact is
+committed, CI's "Require committed linux baselines" step fails with exactly that
+instruction, which is the intended loud failure — better than comparing against
+bytes that record a fold the demo no longer performs. The two midline checkpoints
+have no Linux baseline yet either, and that guard names them too, so one
+`update-visual-baselines` run covers all six frames.

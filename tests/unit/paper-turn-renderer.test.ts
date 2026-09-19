@@ -1,7 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SINGLE_TILE_ANCHOR, resolveGrabAnchor } from '../../src/transition/grab-anchor';
 import { backFaceUvs, buildPaperFrame } from '../../src/transition/geometry';
 import { defaultMotionProfile } from '../../src/transition/motion-profile';
-import type { RendererInput } from '../../src/transition/types';
+import type { Corner, GrabAnchor, RendererInput } from '../../src/transition/types';
+
+// Every real geometry implementation is kept — only the call record is added.
+// Two of the renderer's obligations are claims about calls rather than about
+// output: back-face uvs are computed exactly once per instance, and every frame
+// is folded about the one anchor resolved at activation.
+vi.mock('../../src/transition/geometry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/transition/geometry')>();
+
+  return {
+    ...actual,
+    backFaceUvs: vi.fn(actual.backFaceUvs),
+    buildPaperFrame: vi.fn(actual.buildPaperFrame),
+  };
+});
 
 vi.mock('three', () => {
   class MockBufferAttribute {
@@ -267,11 +282,55 @@ function createInput(): RendererInput {
   return {
     sourceRect: { left: 100, top: 80, width: 240, height: 160 },
     destinationRect: { left: 0, top: 0, width: 1000, height: 700 },
-    grabbedCorner: 'top-right',
+    grabAnchor: 'top-right',
     texture: document.createElement('canvas'),
     backTexture: null,
     profile: defaultMotionProfile,
   };
+}
+
+/** The eight published anchor literals, in clockwise order from `top-left`. */
+const allAnchors: readonly GrabAnchor[] = [
+  'top-left',
+  'top-center',
+  'top-right',
+  'middle-right',
+  'bottom-right',
+  'bottom-center',
+  'bottom-left',
+  'middle-left',
+] as const;
+
+const backFaceUvsSpy = vi.mocked(backFaceUvs);
+const buildPaperFrameSpy = vi.mocked(buildPaperFrame);
+
+function requireOverlay(documentRef: Document = document): HTMLElement {
+  const overlay = documentRef.body.querySelector<HTMLElement>('.paper-turn-overlay');
+
+  if (!overlay) {
+    throw new Error('Expected the paper turn overlay to be attached');
+  }
+
+  return overlay;
+}
+
+/**
+ * Every attribute anywhere in the document whose value carries the anchor
+ * string, reported as `element[attribute]`, so a second carrier shows up by name
+ * rather than as a bare count mismatch.
+ */
+function anchorCarriers(anchor: GrabAnchor, documentRef: Document = document): string[] {
+  const carriers: string[] = [];
+
+  for (const element of Array.from(documentRef.querySelectorAll('*'))) {
+    for (const attribute of Array.from(element.attributes)) {
+      if (attribute.value.includes(anchor)) {
+        carriers.push(`${element.localName}[${attribute.name}]`);
+      }
+    }
+  }
+
+  return carriers;
 }
 
 function createDocumentWithDevicePixelRatio(devicePixelRatio?: number): Document {
@@ -375,7 +434,11 @@ describe('PaperTurnRenderer reverse face', () => {
     const backUv = geometry?.attributes.backUv;
     expect(backUv?.itemSize).toBe(2);
     expect(backUv?.array).toEqual(
-      backFaceUvs(input.grabbedCorner, input.profile.meshColumns, input.profile.meshRows),
+      backFaceUvs(
+        input.grabAnchor as Corner,
+        input.profile.meshColumns,
+        input.profile.meshRows,
+      ),
     );
 
     renderer.dispose();
@@ -435,7 +498,7 @@ describe('PaperTurnRenderer', () => {
     const expected = buildPaperFrame(
       input.sourceRect,
       input.destinationRect,
-      input.grabbedCorner,
+      input.grabAnchor as Corner,
       0.375,
       input.profile,
     );
@@ -621,5 +684,182 @@ describe('PaperTurnRenderer', () => {
     expect(webglRenderer?.dispose).toHaveBeenCalledTimes(1);
     expect(webglRenderer?.forceContextLoss).toHaveBeenCalledTimes(1);
     expect(threeMock.scenes[0]?.objects).toHaveLength(0);
+  });
+});
+
+describe('PaperTurnRenderer resolved anchor', () => {
+  beforeEach(() => {
+    backFaceUvsSpy.mockClear();
+    buildPaperFrameSpy.mockClear();
+  });
+
+  it.each(allAnchors)(
+    'computes back-face uvs once for %s and folds every frame about that anchor',
+    (anchor) => {
+      const input: RendererInput = { ...createInput(), grabAnchor: anchor };
+      const renderer = new PaperTurnRenderer(input);
+
+      // Back-face uvs depend on the anchor alone, so construction is the only
+      // place they may be computed.
+      expect(backFaceUvsSpy).toHaveBeenCalledTimes(1);
+      expect(backFaceUvsSpy).toHaveBeenCalledWith(
+        anchor,
+        input.profile.meshColumns,
+        input.profile.meshRows,
+      );
+      expect(buildPaperFrameSpy).not.toHaveBeenCalled();
+
+      const progresses = [0, 0.25, 0.5, 0.875, 1];
+
+      for (const progress of progresses) {
+        renderer.render(progress);
+      }
+
+      expect(backFaceUvsSpy).toHaveBeenCalledTimes(1);
+      expect(buildPaperFrameSpy).toHaveBeenCalledTimes(progresses.length);
+
+      for (const call of buildPaperFrameSpy.mock.calls) {
+        expect(call[2]).toBe(anchor);
+      }
+
+      renderer.dispose();
+
+      expect(backFaceUvsSpy).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(allAnchors)('publishes %s on the overlay dataset and nowhere else', (anchor) => {
+    const input: RendererInput = { ...createInput(), grabAnchor: anchor };
+    const renderer = new PaperTurnRenderer(input);
+    const overlay = requireOverlay();
+
+    // Written when the overlay is created, so it is already readable before the
+    // first frame writes a progress value.
+    expect(overlay.dataset.progress).toBeUndefined();
+    expect(overlay.dataset.grabAnchor).toBe(anchor);
+    expect(allAnchors).toContain(overlay.dataset.grabAnchor);
+    expect(overlay.getAttribute('data-grab-anchor')).toBe(anchor);
+    expect(overlay.dataset.grabAnchor).toBe(overlay.dataset.grabAnchor?.trim());
+    expect(overlay.dataset.grabAnchor).toMatch(/^[a-z]+-[a-z]+$/);
+    expect(overlay.dataset.meshVertices).toBe(
+      String((input.profile.meshColumns + 1) * (input.profile.meshRows + 1)),
+    );
+
+    for (const progress of [0, 0.25, 0.5, 1]) {
+      renderer.render(progress);
+
+      expect(overlay.dataset.grabAnchor).toBe(anchor);
+      expect(overlay.dataset.progress).toBe(progress.toFixed(3));
+    }
+
+    // The dataset attribute is the whole diagnostic: no second element, no
+    // second attribute, and no debug panel text.
+    expect(anchorCarriers(anchor)).toEqual(['div[data-grab-anchor]']);
+    expect(document.querySelectorAll('[data-grab-anchor]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-grabbed-corner]')).toHaveLength(0);
+    expect(document.body.textContent ?? '').not.toContain(anchor);
+
+    renderer.dispose();
+
+    expect(document.querySelectorAll('[data-grab-anchor]')).toHaveLength(0);
+  });
+
+  it.each([
+    ['an empty tile list', [] as const, 0],
+    ['a collapsed activated tile', [{ left: 0, top: 0, width: 0, height: 0 }] as const, 0],
+    ['an out-of-range tile index', [{ left: 0, top: 0, width: 240, height: 160 }] as const, 4],
+  ] as const)('publishes bottom-right when resolution collapsed from %s', (_case, rects, index) => {
+    const collapsed = resolveGrabAnchor(rects, index);
+
+    expect(collapsed).toBe(SINGLE_TILE_ANCHOR);
+
+    const renderer = new PaperTurnRenderer({ ...createInput(), grabAnchor: collapsed });
+    const overlay = requireOverlay();
+
+    expect(overlay.dataset.grabAnchor).toBe('bottom-right');
+    expect(backFaceUvsSpy).toHaveBeenCalledWith(
+      'bottom-right',
+      defaultMotionProfile.meshColumns,
+      defaultMotionProfile.meshRows,
+    );
+
+    renderer.render(0.5);
+
+    expect(buildPaperFrameSpy.mock.calls[0]?.[2]).toBe('bottom-right');
+
+    renderer.dispose();
+  });
+
+  it.each([
+    ['profile\\.meshColumns', { meshColumns: 21 }],
+    ['profile\\.meshRows', { meshRows: 15 }],
+    ['profile\\.meshColumns and profile\\.meshRows', { meshColumns: 21, meshRows: 15 }],
+  ] as const)('rejects an odd mesh naming %s before allocating anything', (named, overrides) => {
+    const input: RendererInput = {
+      ...createInput(),
+      profile: { ...defaultMotionProfile, ...overrides },
+    };
+
+    expect(() => new PaperTurnRenderer(input)).toThrow(new RegExp(`Invalid ${named}: expected an even integer`));
+
+    // Validation runs first, so no overlay, canvas, mesh, or texture is ever
+    // allocated and there is nothing for the fallback path to clean up.
+    expect(document.body.children).toHaveLength(0);
+    expect(document.querySelector('[data-grab-anchor]')).toBeNull();
+    expect(threeMock.renderers).toHaveLength(0);
+    expect(threeMock.geometries).toHaveLength(0);
+    expect(threeMock.materials).toHaveLength(0);
+    expect(threeMock.textures).toHaveLength(0);
+    expect(backFaceUvsSpy).not.toHaveBeenCalled();
+    expect(buildPaperFrameSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the mobile mesh budget and the twice-viewport canvas cap', () => {
+    const viewport = { width: 390, height: 844 };
+    const input: RendererInput = {
+      ...createInput(),
+      grabAnchor: 'top-center',
+      destinationRect: { left: 0, top: 0, ...viewport },
+    };
+    const vertexCount = (input.profile.meshColumns + 1) * (input.profile.meshRows + 1);
+
+    expect(input.profile.meshColumns).toBe(20);
+    expect(input.profile.meshRows).toBe(14);
+    expect(vertexCount).toBe(315);
+
+    const renderer = new PaperTurnRenderer(input);
+    const overlay = requireOverlay();
+    const geometry = threeMock.geometries[0];
+
+    if (!geometry) {
+      throw new Error('Expected mesh geometry to be created');
+    }
+
+    expect(threeMock.geometries).toHaveLength(1);
+    expect(overlay.dataset.meshVertices).toBe('315');
+    expect(geometry.attributes.position!.array).toHaveLength(315 * 3);
+    expect(geometry.attributes.shade!.array).toHaveLength(315);
+    expect(geometry.attributes.uv!.array).toHaveLength(315 * 2);
+    expect(geometry.attributes.backUv!.array).toHaveLength(315 * 2);
+
+    // The canvas is the destination rect scaled by the capped pixel ratio, so
+    // the backing store stays within twice the viewport in each dimension.
+    const pixelRatio = threeMock.renderers[0]?.setPixelRatio.mock.calls[0]?.[0] as number;
+
+    expect(pixelRatio).toBe(input.profile.maxTextureDpr);
+    expect(pixelRatio).toBeLessThanOrEqual(2);
+    expect(threeMock.renderers[0]?.setSize).toHaveBeenCalledWith(
+      viewport.width,
+      viewport.height,
+      false,
+    );
+    expect(viewport.width * pixelRatio).toBeLessThanOrEqual(2 * viewport.width);
+    expect(viewport.height * pixelRatio).toBeLessThanOrEqual(2 * viewport.height);
+
+    renderer.render(0.5);
+
+    expect(backFaceUvsSpy).toHaveBeenCalledTimes(1);
+
+    renderer.dispose();
   });
 });

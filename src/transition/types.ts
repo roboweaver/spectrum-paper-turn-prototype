@@ -1,4 +1,60 @@
+/**
+ * A true rectangle corner, and the vocabulary of the reveal clip polygon.
+ *
+ * Deliberately kept a four-value union that admits no edge midpoint, so the
+ * polygon's winding-order corner list cannot grow beyond four members.
+ */
 export type Corner = 'top-left' | 'top-right' | 'bottom-right' | 'bottom-left';
+
+/** The midpoint of one rectangle edge. */
+export type EdgeMidpoint = 'top-center' | 'middle-right' | 'bottom-center' | 'middle-left';
+
+/**
+ * Any point the sheet may be grabbed by: the four corners plus the four edge
+ * midpoints. The pivot is always the geometric opposite of the grab anchor.
+ */
+export type GrabAnchor = Corner | EdgeMidpoint;
+
+/** Which family of line the sheet folds about. */
+export type FoldAxisKind = 'diagonal' | 'midline';
+
+/**
+ * The line in unit-square coordinates about which the sheet's back face is the
+ * reflection of its front face. It joins the two anchors of the grab anchor's
+ * own family that are neither the grab anchor nor its opposite.
+ */
+export interface FoldAxis {
+  kind: FoldAxisKind;
+  /** Endpoint of the fold line, in unit-square coordinates. */
+  origin: Point;
+  /** The other endpoint of the fold line, in unit-square coordinates. */
+  far: Point;
+}
+
+/**
+ * Where a tile sits in the measured grid.
+ *
+ * Indices are 0-based: rows are ordered top to bottom and columns left to
+ * right, so `rowIndex` `0` is the topmost measured row and `columnIndex` `0`
+ * the leftmost measured column. Both counts are integers of at least `1`, with
+ * `0 <= rowIndex < rowCount` and `0 <= columnIndex < columnCount`.
+ */
+export interface GridPosition {
+  rowIndex: number;
+  rowCount: number;
+  columnIndex: number;
+  columnCount: number;
+}
+
+/** Classification of a tile's row index within the measured grid. */
+export type RowBand = 'top' | 'middle' | 'bottom';
+
+/**
+ * Classification of a tile's column index within the measured grid. A `center`
+ * band exists only when `columnCount` is odd.
+ */
+export type ColumnBand = 'left' | 'center' | 'right';
+
 export type TransitionState = 'idle' | 'preparing' | 'opening' | 'open' | 'closing';
 export type MotionMode = 'full' | 'fallback';
 
@@ -41,7 +97,7 @@ export interface PaperFrame {
 export interface RendererInput {
   sourceRect: Rect;
   destinationRect: Rect;
-  grabbedCorner: Corner;
+  grabAnchor: GrabAnchor;
   texture: HTMLCanvasElement;
   /**
    * Capture of the destination page, printed on the sheet's reverse face.
@@ -58,7 +114,7 @@ export interface PaperRenderer {
 
 export interface TransitionOpenRequest {
   sourceId: string;
-  grabbedCorner: Corner;
+  grabAnchor: GrabAnchor;
   trigger: HTMLElement;
 }
 

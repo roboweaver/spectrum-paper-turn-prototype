@@ -512,7 +512,8 @@ one for free.
 the origin; and `along` enters only through `ridge = sin(π · along / axisLength)`, which
 satisfies `sin(π t) = sin(π (1 − t))`. The canonical entries above therefore produce
 output identical to today's corner behavior up to floating-point rounding — far inside
-existing test tolerances and unable to move a pixel in a visual baseline.
+existing test tolerances and unable to move a pixel in a visual baseline captured at the
+same anchor.
 
 ### Why the diagonal case needs unit-square space and the midline case does not
 
@@ -1107,11 +1108,21 @@ mesh budget — is unaffected.
 
 ### Visual regression
 
-Existing baselines cover a `top-right` corner turn and remain valid, since corner
-behavior is unchanged up to floating-point rounding. **New baselines are required** for a
-midline fold: peak curl and mid-turn for a `top-center` grab, which is the case the eye
-has never seen. Per the existing policy, baselines are Chromium-desktop on Darwin, must
-be reviewed by eye rather than merely accepted, and the visual suite skips elsewhere.
+**New baselines are required** for a midline fold: peak curl and mid-turn for a
+`top-center` grab, which is the case the eye has never seen.
+
+The existing corner baselines also have to be regenerated, and for a product reason
+rather than a geometry one. They were captured while `main.ts` hardcoded `top-right` for
+every tile; the checkpoint still drives the real activation path and pins no anchor, and
+tile 0 at the corner suite's 1280x900 viewport measures into a 1 x 3 grid that resolves
+`bottom-left`. So the two mid-transition frames legitimately change, while the `progress
+= 0` and settled frames are anchor-independent and stay byte-identical. Corner *geometry*
+parity is established by the golden comparison against pre-feature vertex positions
+(`1e-4` CSS pixels) and reveal polygon (`1e-6`), plus a frame comparison at a fixed
+anchor — not by a PNG byte comparison. Per the existing policy, baselines are
+Chromium-desktop on Darwin, must be reviewed by eye rather than merely accepted, and the
+visual suite skips elsewhere; the Linux counterparts come only from the
+`update-visual-baselines` workflow.
 
 ---
 
