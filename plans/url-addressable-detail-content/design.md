@@ -512,39 +512,110 @@ scripts should fall through to normal navigation — but for OmnisTools that is
 *every* page, so the enhancement would never engage and the feature would do
 nothing.
 
-Two architectures resolve it. They differ by an order of magnitude in scope.
+### Resolved: render live, through an app-provided init contract
 
-**A — Preview, then navigate.** The tile's reverse face is not the live page. It
-is a lightweight, server-rendered **preview fragment** with no script dependency:
-the first N rows of the trackings table as plain HTML, the form's shape without
-its pickers. The turn reveals that preview, and on settle a real browser
-navigation loads the genuine interactive page.
+OmnisTools is a plain TypeScript Node application with no Turbo, htmx, or
+similar navigation layer, and a refactor on the scale of its earlier move to Node
+and Bootstrap is acceptable. Live rendering is preferred, with load-on-settle
+acceptable as a fallback. That settles the architecture, and it rules out the two
+obvious candidates for different reasons.
 
-This sidesteps rehydration completely and matches the stated mental model almost
-exactly — "the back of the tile would be the list." The fragment contract is then
-satisfied by a purpose-built partial the app already knows how to render, rather
-than by trying to make full application pages adoptable. The cost is a second
-load after the turn, and a moment where previewed content is replaced by the real
-thing. For navigation that is a fair trade, because the preview is genuinely
-useful information rather than a spinner.
+**Generic script re-execution is the wrong tool.** Turbo Drive works by fetching
+a page, replacing the body, and evaluating the response's scripts, with dedup,
+ordering, history, and cache invalidation all handled. Without Turbo already
+present, that is a navigation framework built from scratch underneath a
+transition effect. It is also **unnecessary here**: in a single-bundle TypeScript
+app the client code is *already loaded* on the grid page. The code is present; the
+only thing missing is its binding to newly arrived DOM. So the mechanism is not
+"re-run the scripts" but "initialise a subtree", which is a far smaller thing.
 
-**B — Client-side navigation with script re-execution.** Fetch, adopt, re-execute
-the page's scripts, `pushState`, and land on the real interactive page with no
-second load. This is essentially what Turbo Drive does: intercept link clicks,
-fetch in the background, replace the body, and manage history and script
-evaluation.
+**Preview-only is less than what is wanted.** It sidesteps initialisation
+entirely, but the reverse face is then a static approximation rather than the
+page, and live was the stated preference.
 
-If this is the desired end state, **adopt Turbo and drive the paper-turn from its
-transition hooks rather than building a bespoke navigation layer.** Script
-re-execution, dedup across visits, ordering, history, and cache invalidation are
-each their own problem, and rebuilding them underneath a transition effect would
-be the tail wagging the dog. Whether OmnisTools already uses Turbo, htmx, or
-similar is therefore a live question that changes this answer completely.
+So the target is **live, via a contract the application implements**:
 
-**Recommendation: A.** It delivers the described experience, fits the fragment
-contract this design already specifies, and does not commit the application to a
-navigation framework as a side effect of wanting a transition. B stays open, and
-gets much cheaper if Turbo is ever adopted for its own reasons.
+```ts
+// OmnisTools side, one per turnable route
+interface PaperTurnPage {
+  /** Bind behaviour to a freshly adopted subtree. Root-scoped, never document-wide. */
+  init(root: HTMLElement): void | Promise<void>;
+  /** Release listeners, timers, and observers when the page is turned away from. */
+  destroy?(root: HTMLElement): void;
+}
+```
+
+Four properties are load-bearing, and each is a real constraint on the refactor
+rather than a formality:
+
+- **Root-scoped.** Init must bind within a passed element, not query `document`.
+  Anything reaching for `document.querySelector` will bind to the grid page or to
+  nothing.
+- **Idempotent.** The same route will be initialised repeatedly across a session.
+- **Awaitable when not synchronous.** If the page's content is not settled when
+  `init` returns — a table fetching its own rows is the obvious case — it must
+  return a promise that resolves when it is. See below; this is the constraint
+  that matters most.
+- **Tear-down-able.** Without `destroy`, every navigation leaks whatever `init`
+  attached, and in a tool used all day that accumulates.
+
+The server side needs **a partial render mode per route**: the same template
+rendered without the surrounding layout, exposing `[data-paper-turn-detail]`.
+Worth noting that both the live path and the preview path need exactly this, so it
+is the shared foundation and the first thing the refactor should establish.
+
+### The sequencing constraint that decides whether "live" looks right
+
+This is the sharp edge, and it is not obvious.
+
+`runFull` captures the destination to a texture **before the first frame**, and
+the sheet prints that texture on its reverse face. `docs/architecture.md` is
+explicit about why that matters: at progress 1 the sheet's geometry equals the
+destination rect exactly, so the handoff from texture to real DOM lands
+pixel-for-pixel and is invisible.
+
+If `init` — or a data fetch it triggers — completes *after* the capture, that
+property breaks. The sheet turns over showing an uninitialised skeleton: no date
+picker, an unsorted table, quite possibly an empty one. Then at settle the real
+DOM appears fully populated and the content visibly pops. The turn would be
+technically correct and look broken.
+
+So the order must be:
+
+```
+adopt fragment → init(root) → await ready → capture → animate → settle
+```
+
+which puts initialisation *and any data it fetches* on the pre-turn critical
+path. A list view that AJAXes its rows could add hundreds of milliseconds there.
+
+**The answer is prefetch plus pre-initialisation, offscreen.** On
+`pointerenter`/`focusin`, adopt the fragment into the detail surface, run `init`,
+and let its data land — so that by the time the tile is clicked the destination is
+already adopted, initialised, settled, and capturable. This composes directly with
+the prefetch work in phase 2 rather than needing its own machinery.
+
+It also builds on a mechanism that already exists and is already tested. During
+`preparing` the detail surface is displayed but clipped to a degenerate point, and
+the capture passes `{ clipPath: 'none' }` as a style override so `html-to-image`
+rasterises the clone unclipped while the live element stays collapsed. "Rendered,
+initialised, and measurable, but not visible" is therefore an established idea in
+this codebase; pre-initialisation moves it earlier rather than inventing it.
+
+Two escape hatches, both reusing paths that already exist:
+
+- A route that cannot be ready inside the latency budget commits to the
+  **fallback** transition, exactly as a slow resolve does.
+- A route whose `init` cannot be made safely idempotent serves a **preview
+  fragment** instead and does a real navigation on settle. Same server partial
+  mode, different client handling — so keeping this available costs nothing beyond
+  the branch.
+
+**Phase 5 therefore spans two repositories.** This one defines the contract, the
+resolver, the pre-init sequencing, and the fallback behaviour. OmnisTools
+implements `PaperTurnPage` per route and the partial render mode. The contract is
+the interface between them, and it should be pinned down here before the app-side
+refactor starts.
 
 ### Grid shape policy is wrong for arbitrary navigation
 
@@ -607,7 +678,7 @@ later ones are each independently valuable.
 | **2** | Prefetch on hover/focus/touch, fragment cache, latency budget, fallback commit on slow resolve, pending affordance | The turn feels native rather than merely correct |
 | **3** | `pushState`/`popstate`, deep linking, query-param carry-over. *Not* standalone page rendering — the host already serves real pages. | Real navigation |
 | **4** | **Component packaging.** Generalise token inlining beyond `--spectrum`, scope or shadow the CSS, top-layer surface, dynamic Three import, guarded element registration, adopt host tiles instead of rendering them, overridable scroll freeze | Embeddable in Grimoire, WordPress, OPA |
-| **5** | Preview-fragment endpoint per destination, nav grid layout policy, raised tile ceiling, retuned duration | Usable as OmnisTools navigation |
+| **5** | `PaperTurnPage` init contract, pre-init during prefetch, capture-after-ready sequencing, preview escape hatch, nav grid layout policy, raised tile ceiling, retuned duration. **Spans two repos** — OmnisTools implements the contract and a per-route partial render mode. | Usable as OmnisTools navigation |
 | **6** | Cross-origin taint logging, capture-cost telemetry, authoring lint for the fragment contract | Operability |
 
 **This branch is Phase 1.** Phases 2–6 get their own branches and their own PRs.
@@ -665,20 +736,27 @@ any of them should be settled unilaterally:
    navbar dropdowns would be replaced by a tile grid. See
    [The navigation-surface use case](#the-navigation-surface-use-case-omnistools).
    It raises its own blocking question, below.
-3. **Does OmnisTools already use Turbo, htmx, or a similar navigation layer?**
-   This decides between architecture A and B for the script-rehydration problem,
-   and the two differ by an order of magnitude in scope. **Blocking phase 5.**
-4. **Is a preview fragment acceptable as the tile's reverse face,** with the real
-   interactive page loading on settle? Architecture A depends on it, and it is a
-   product decision about whether a brief content swap after the turn is a fair
-   price for not building a navigation framework.
-5. **Is any detail-page content user-authored?** Decides whether a sanitisation
+3. ~~**Does OmnisTools already use Turbo or htmx?**~~ **Answered: no** — a plain
+   TypeScript Node application, and a refactor on the scale of its move to Node
+   and Bootstrap is acceptable. Generic script re-execution is therefore both
+   unavailable and unnecessary; the resolution is an app-provided init contract.
+4. ~~**Is a preview fragment acceptable?**~~ **Answered: live is preferred,
+   load-on-settle acceptable.** So live is the target and preview becomes a
+   per-route escape hatch rather than the default.
+5. **Can every turnable route's `init` be made idempotent and root-scoped?** The
+   live path depends on it. Any route that cannot falls back to a preview
+   fragment, so this determines how much of the app gets the full effect rather
+   than whether the feature works at all.
+6. **Which routes fetch their own data after init, and how slow are they?** This
+   sets the pre-init prefetch budget, and decides which routes can realistically
+   be capture-ready by click time.
+7. **Is any detail-page content user-authored?** Decides whether a sanitisation
    layer is in scope at all. Near-certainly *yes* for WordPress, which makes the
    host the security boundary.
-6. **Is the 16-record demo index kept** as a fixture alongside real content, or
+8. **Is the 16-record demo index kept** as a fixture alongside real content, or
    replaced? It is what every visual baseline and the tile-count control are
    written against, so replacing it is a larger change than it looks.
-7. **Does the latency budget belong in `MotionProfile`?** It is a timing and a
+9. **Does the latency budget belong in `MotionProfile`?** It is a timing and a
    designer-tunable, which argues yes; but `MotionProfile` is constructed as a
    literal by four test suites, and `docs/architecture.md` records that widening
    it is a deliberate cost. A separate resolver config may be cleaner.
