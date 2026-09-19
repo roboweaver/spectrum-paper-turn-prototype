@@ -37,21 +37,27 @@ const CORNER_VIEWPORT = { width: 1280, height: 900 };
  * corner baselines; that is fine, because they are new snapshot names with no
  * prior baseline to match.
  *
- * The height is load-bearing, not cosmetic. A single column of three 280px cards
- * plus the header measures 1169px at this width, and a `fullPage` capture of a
- * page taller than the viewport makes Chromium capture beyond the viewport, which
- * fires a `resize` event in the page. The coordinator treats a resize as an
- * interruption and settles through the fallback, so the screenshot would catch
- * the settled detail page rather than a fold. 1200px keeps the whole grid page
- * inside the viewport, exactly as the 1280x900 corner viewport does, so the
- * capture disturbs nothing.
+ * The height is load-bearing, not cosmetic, and it needs generous slack rather
+ * than a snug fit. A `fullPage` capture of a page taller than its viewport makes
+ * Chromium capture beyond the viewport, which fires a `resize` event in the page;
+ * the coordinator treats a resize as an interruption and settles through the
+ * fallback. The visible symptom is not a wrong screenshot but the *next*
+ * checkpoint failing with a null overlay progress, because the overlay has
+ * already unmounted — so this failure reads as unrelated to the height that
+ * caused it.
  *
- * That leaves about 30px of slack, because the hero's outbound links wrap to
- * their own line at this width. Anything further added above the grid needs this
- * height raised in the same change — and raising it re-frames both midline
- * baselines, so they have to be regenerated on both platforms.
+ * The slack has to absorb cross-platform font metrics, which is why it is this
+ * large. The hero's three text blocks all wrap at 400px, and the runner has no
+ * Adobe Clean installed, so linux resolves a wider fallback and takes more lines
+ * than darwin for the same copy. At 1200px this test passed on darwin, where the
+ * page measured 1169px, and failed on linux, where the same page cleared the
+ * viewport — the darwin margin was never the real constraint. 1400px leaves
+ * darwin around 230px of room and linux enough to absorb several extra wrapped
+ * lines.
+ *
+ * Anything added above the grid should re-check this on linux, not just locally.
  */
-const MIDLINE_VIEWPORT = { width: 400, height: 1200 };
+const MIDLINE_VIEWPORT = { width: 400, height: 1400 };
 
 /** The interior tile of the single-column grid: row 1 of 3, the row centre. */
 const MIDLINE_TILE_INDEX = 1;
