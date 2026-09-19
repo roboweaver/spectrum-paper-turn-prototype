@@ -26,6 +26,14 @@ the pages are served by the same app. That single constraint removes most of the
 difficulty, and the design below is shaped by what it removes as much as by what
 it adds.
 
+The eventual delivery target is **a component embedded in existing sites**
+(Grimoire, WordPress, OPA) rather than an application of its own, which means it
+needs no server: the host serves the pages, and same-origin holds for free. See
+[Packaging as a component](#packaging-as-a-component). That target does not change
+the mechanism this document specifies, but it does add a set of host-interaction
+hazards, and it is why phase 1 is scoped to prove the mechanism in the
+prototype's own page first.
+
 ---
 
 ## What same-origin removes
@@ -242,14 +250,28 @@ images. Real pages will. Any `<img>` in the adopted fragment must be awaited to
 `decode()` (or `complete`) before capture, or the sheet's reverse face shows
 gaps where images will be.
 
-**Cross-origin subresources are the one remaining taint risk.** Same-origin
-*documents* do not guarantee same-origin *assets*. A detail page embedding an
-image from a third-party CDN without `crossorigin` can taint the capture canvas,
-and `texImage2D` then throws. This is not fatal — `capabilities.ts` and the
-coordinator already treat capture failure as an explicit outcome that degrades
-to the fallback — but it will read as "the fancy transition randomly stops
-working on some pages," so it needs a diagnostic rather than silence. The
-authoring rule is to serve detail-page images same-origin or with CORS.
+**Cross-origin subresources are an accepted risk, documented and not solved.**
+Same-origin *documents* do not guarantee same-origin *assets*. A page embedding
+an image from a third-party CDN without `crossorigin` can taint the capture
+canvas, and `texImage2D` then throws.
+
+This is deliberately **not** something this design mitigates. The degradation
+path already exists and is already correct: `capabilities.ts` and the coordinator
+treat capture failure as an explicit outcome that settles through the fallback,
+so the affected page still opens, just with the opacity/scale transition instead
+of the turn. Building detection, per-asset rewriting, or a proxy to recover the
+full turn would cost more than the outcome is worth.
+
+What it needs is to be **known** rather than mysterious, because the symptom —
+"the turn works on most pages and not on that one" — invites a hunt for a
+geometry or renderer bug that isn't there. So:
+
+- The authoring guidance is to serve images used on turnable pages same-origin
+  or with `crossorigin`, and that guidance lives with the fragment contract.
+- The failure is logged distinguishably from other capture failures, so the
+  cause is visible in a console rather than inferred.
+- No requirement will be derived asserting the full turn survives a tainted
+  capture. The asserted behaviour is that it degrades cleanly.
 
 **Slotted text remains mandatory.** If page authors use Spectrum components with
 attribute-only headings, `html-to-image` flattens the slot via `assignedNodes()`,
@@ -273,15 +295,19 @@ separately.
 
 ---
 
-## History and standalone pages
+## History and real URLs
 
 A multi-page app means the detail URL is real and must work cold. Two
-independent requirements fall out:
+independent requirements fall out — and the first is **already satisfied by any
+real host**, which is the main practical benefit of the component framing:
 
-- **Every detail page renders standalone**, server-side, at its own URL, with
-  its own full layout around the `[data-paper-turn-detail]` template. The
-  paper-turn is an enhancement on top of working navigation, never a
-  precondition for it.
+- **Every detail page renders standalone**, server-side, at its own URL, with its
+  own full layout around the `[data-paper-turn-detail]` template. The paper-turn
+  is an enhancement on top of working navigation, never a precondition for it.
+  Grimoire, WordPress, and OPA all do this already by being ordinary
+  server-rendered sites, so nothing needs building here; the obligation is only
+  that the component must not *break* it. For the prototype's own page this is
+  the one part that has to be simulated, with static fixtures in `public/`.
 - **The transition keeps the URL honest.** `pushState` to the detail URL on
   `settleOpen`; `popstate` drives `coordinator.close()`; closing returns to the
   index URL. The coordinator's `close()` already re-measures the source card
@@ -320,19 +346,145 @@ a bug: such a page should fall through to normal navigation.
 
 ---
 
-## Phasing
+## Packaging as a component
 
-Deliberately more than one PR. The first is self-contained and reviewable; the
-later ones are each independently valuable.
+The intent is to embed this in existing sites — Grimoire, WordPress, and OPA —
+rather than to run it as its own application. **It needs no server of its own,**
+and the same-origin requirement is satisfied for free because the pages it
+fetches are the host's own.
+
+This is a better fit than the standalone framing, not a compromise. A real site
+already has working links to real pages, so the component becomes a genuine
+progressive enhancement: intercept a click that already worked, turn the page
+into view, and fall through to ordinary navigation on any failure. It also
+answers the phase-3 question outright — nothing needs building to serve detail
+pages, because the host already does.
+
+What it costs is a packaging change the prototype has not begun, plus a set of
+host-interaction hazards that do not exist in a page we control.
+
+### The inversion: adopt the host's tiles, don't render them
+
+Today `createDemoApp(root)` assigns `root.innerHTML` with an entire application
+shell — hero, eyebrow, grid, detail surface. There is **no custom element and no
+shadow root anywhere in `src/`**. It is an app, not a component.
+
+As a component it should not render tiles at all. The tiles are the host's:
+a WordPress post grid, a Grimoire archive listing. So the component's input
+becomes *a selector for links that already exist*, and its job is to enhance
+them:
+
+```js
+paperTurn.enhance({ links: '.post-grid a.post-link' });
+```
+
+This inverts much of the current data path out of the critical case.
+`CardRecord`, `cards.ts`, `createCardItem`, and `sp-card` become the **demo's**
+index — a fixture the prototype keeps for its own page and its visual baselines
+— rather than the mechanism. The grab-anchor resolver is unaffected and is the
+part that carries over cleanly, because it already derives everything from
+measured rects and knows nothing about who authored the markup.
+
+### Host-interaction hazards
+
+Each of these is verified against the current source, not anticipated.
+
+**Global CSS would restyle the host.** `src/styles.css` opens with `:root`,
+`* { box-sizing: border-box }`, `html, body { margin: 0 }`, and
+`button { font: inherit }`, then uses generic names like `.hero`, `.eyebrow`,
+`.list-surface`, and `.demo-shell`. Loading that into a WordPress theme changes
+the entire page. The component's styles must be scoped — shadow root, or a
+mandatory prefix — and the resets must not ship at all.
+
+**The token-inlining fix does not generalise, and this is the significant one.**
+`THEME_TOKEN_PREFIX` is `'--spectrum'` (`capture.ts:83`) and the walk is
+`element.closest('sp-theme')` (`capture.ts:109`). On a host that is not
+Spectrum, there is no `sp-theme` to find and no `--spectrum*` property to
+enumerate, so `themeTokenCss` returns an empty string and the capture proceeds
+with nothing inlined.
+
+That is *exactly* the bug `docs/architecture.md` records — the `foreignObject`
+clone is detached and inherits nothing, so every custom property silently falls
+back, producing collapsed padding, wrong greys, and text metrics that no longer
+match the box they were measured into. It was fixed narrowly, for Spectrum, and
+a component capturing host DOM reintroduces it in general form for whatever
+custom properties the host's cascade provides. The fix is to inline **all**
+inherited custom properties from the capture root's ancestor chain rather than a
+hardcoded prefix from a hardcoded element.
+
+Note the same doc's warning about how this failure presents: it reproduced on a
+designer's Mac and not in headless Chromium, because a machine that resolves the
+same fallbacks on both sides sees nothing wrong. A CI suite running on one host
+is not evidence of absence here.
+
+**`position: fixed` is not reliable inside a host page.** `.detail-surface` is
+`position: fixed; z-index: 20; inset: 0` and the WebGL overlay is the same at
+`z-index: 30`. Two independent ways that breaks:
+
+- Any ancestor with `transform`, `filter`, `perspective`, `backdrop-filter`,
+  `contain: paint`, or `will-change: transform` becomes the containing block, and
+  the "full-viewport" surface silently becomes container-sized. Animation-heavy
+  WordPress themes do this routinely.
+- `z-index: 20`/`30` loses to a WordPress admin bar at `99999` or a sticky header
+  at `9999`, so the detail surface would render *underneath* host chrome.
+
+The clean answer is the **top layer** — a `<dialog>` opened with `showModal()`
+escapes both z-index competition and transformed-ancestor containing blocks by
+definition. Whether `html-to-image` rasterises a top-layer element correctly, and
+where the WebGL overlay has to sit relative to it, I have **not** verified. It
+should be spiked before being committed to.
+
+**`freezeScroll()` mutates the host's `<body>`,** setting `position: fixed` and a
+negative `top`. In our own page that is safe. In a host page it fights sticky
+headers, scroll-linked animations, and anything else reading scroll position, and
+it must become overridable.
+
+**Bundle size is a real objection in a WordPress context.** The build is 1.22 MB
+raw and 237 kB gzipped, the bulk of it Three.js, to animate a transition. Three
+is a static import today, but the fallback path needs no WebGL at all, so it
+should be loaded dynamically only once a full-motion turn is actually committed.
+That moves most of the weight off the critical path for every visitor who never
+clicks, and off it entirely for visitors who take the fallback.
+
+**Custom element name collisions.** Nothing in `src/` calls
+`customElements.define` yet, but the Spectrum components do it on import.
+`define` throws on a duplicate name, so a host that already loads Spectrum — or
+two plugins that each bundle this component — breaks. Registration has to be
+guarded.
+
+**Firefox already degrades, and it will show more.** `computedStyleMap()` is
+Chromium-only and `themeTokenCss` is guarded to skip inlining without it. That is
+tolerable when the only tokens at stake are Spectrum's own; it is more visible
+when host CSS is what the capture is missing.
+
+### What this means for the phasing
+
+The component packaging is **not** phase 1 work, and phase 1 does not need to
+guess at it. Phase 1's deliverable — a content resolver, a fragment contract, and
+a sync `renderDetail` that adopts a fragment — is the same mechanism either way,
+and is best proven in the prototype's own page where the CSS and the theme are
+known. The component form then becomes its own phase, with the hazards above as
+its checklist.
+
+One thing phase 1 should avoid on account of it: do not deepen the assumption
+that the component renders its own tiles. Keeping the resolver keyed on a URL
+rather than on a `CardRecord` id is enough to leave the inversion open.
 
 | Phase | Scope | Ships |
 | --- | --- | --- |
 | **1** | `ContentResolver`, fragment contract, `CardRecord.url`, tiles as anchors, generic detail region, `renderDetail` adopts a fragment, fonts/images awaited before capture, failure falls through to navigation | A working URL-backed turn, transition subsystem untouched |
 | **2** | Prefetch on hover/focus/touch, fragment cache, latency budget, fallback commit on slow resolve, pending affordance | The turn feels native rather than merely correct |
-| **3** | `pushState`/`popstate`, standalone server-rendered detail pages, deep linking, query-param carry-over | Real navigation |
-| **4** | Cross-origin subresource diagnostics, capture-cost telemetry, authoring lint for the fragment contract | Operability |
+| **3** | `pushState`/`popstate`, deep linking, query-param carry-over. *Not* standalone page rendering — the host already serves real pages. | Real navigation |
+| **4** | **Component packaging.** Generalise token inlining beyond `--spectrum`, scope or shadow the CSS, top-layer surface, dynamic Three import, guarded element registration, adopt host tiles instead of rendering them, overridable scroll freeze | Embeddable in Grimoire, WordPress, OPA |
+| **5** | Cross-origin taint logging, capture-cost telemetry, authoring lint for the fragment contract | Operability |
 
-**This branch is Phase 1.** Phases 2–4 get their own branches and their own PRs.
+**This branch is Phase 1.** Phases 2–5 get their own branches and their own PRs.
+
+Phase 4 is the largest and is gated on knowing all three host stacks. Grimoire is
+Go with server-rendered templates under `themes/` and a separate React admin SPA,
+so its public site is a straightforward host. WordPress is the hard one: unknown
+theme CSS, plugin soup, an admin bar above our stacking context, and near-certain
+user-authored content. OPA is unidentified — see [Open questions](#open-questions).
 
 ---
 
@@ -369,18 +521,21 @@ must come from the workflow rather than from a Darwin machine.
 These need answers before `requirements.md` can be derived, and I do not think
 any of them should be settled unilaterally:
 
-1. **What serves the pages?** The prototype is a static Vite build deployed to
-   GitHub Pages by `deploy-pages.yml`. "Same server, many pages" implies
-   something that renders detail pages — a static multi-page Vite build with an
-   input per page, or a framework, or an existing app this is being grafted onto.
-   Phase 1 can be developed against static fixture pages in `public/`, but Phase
-   3 cannot be designed without knowing this.
-2. **Is any detail-page content user-authored?** Decides whether a sanitisation
-   layer is in scope at all.
-3. **Is the 16-record demo index kept** as a fixture alongside real content, or
+1. ~~**What serves the pages?**~~ **Answered: the host application does.** This
+   ships as a component embedded in an existing site, so it needs no server of
+   its own. See [Packaging as a component](#packaging-as-a-component) — this
+   answer simplifies the design rather than complicating it, because the host's
+   links already work and the component becomes a true progressive enhancement.
+2. **What is OPA?** Named as a target host alongside WordPress and Grimoire, and
+   I have not assumed what it is. Its stack decides how much of the component's
+   CSS-isolation and adoption work it needs. **Blocking the component design.**
+3. **Is any detail-page content user-authored?** Decides whether a sanitisation
+   layer is in scope at all. Near-certainly *yes* for WordPress, which makes the
+   host the security boundary.
+4. **Is the 16-record demo index kept** as a fixture alongside real content, or
    replaced? It is what every visual baseline and the tile-count control are
    written against, so replacing it is a larger change than it looks.
-4. **Does the latency budget belong in `MotionProfile`?** It is a timing and a
+5. **Does the latency budget belong in `MotionProfile`?** It is a timing and a
    designer-tunable, which argues yes; but `MotionProfile` is constructed as a
    literal by four test suites, and `docs/architecture.md` records that widening
    it is a deliberate cost. A separate resolver config may be cleaner.
@@ -397,3 +552,9 @@ any of them should be settled unilaterally:
 - No client-side router. Phase 3 adds history integration to real navigation; it
   does not add a routing layer.
 - No change to `?tiles=`, `?duration=`, `?fallback=`, or `?debug=` semantics.
+- **No server of any kind.** The host application serves the pages. Nothing here
+  requires a proxy, an API, a build-time page generator, or a runtime.
+- No mitigation of cross-origin subresource tainting. It is documented as an
+  accepted risk that degrades to the fallback, and logged so it is diagnosable.
+- No component packaging in phase 1. The mechanism is proven in the prototype's
+  own page first; phase 4 makes it embeddable.
