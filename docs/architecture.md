@@ -15,6 +15,7 @@ the few hundred milliseconds a card is turning into a page.
 ```
 main.ts
   ├── grab-anchor ────────── measured tile rects → the grab anchor
+  ├── tile-grid ─────────── tile count → grid shape
   └── app.ts ─────────────── builds the Spectrum list + detail DOM
         └── TransitionCoordinator ── owns the lifecycle and all cleanup
               ├── DomTransitionView ─ every DOM mutation the transition makes
@@ -33,6 +34,7 @@ main.ts
 | `transition-coordinator.ts` | State machine, overlap prevention, scroll freeze, focus, inertness, failure recovery. The only module allowed to decide *what happens next*. |
 | `dom-transition-view.ts` | The single seam through which the transition touches the DOM. Keeps the coordinator testable without a browser. |
 | `grab-anchor.ts` | Pure functions. Given the measured tile rects and the index of the activated tile, returns the anchor the sheet is grabbed by — one of four corners or four edge midpoints. No DOM, no clock, never throws. |
+| `tile-grid.ts` | Pure functions. How many tiles the demo shows, and the grid shape that many lay out in at a given width. The demo's only way to reach all eight anchors, since the anchor follows grid position. |
 | `geometry.ts` | Pure functions. Given two rects, an anchor, and progress, returns a `PaperFrame`. No DOM, no WebGL, no time. |
 | `paper-turn-renderer.ts` | Three.js overlay lifecycle: canvas, camera, mesh, texture, shadow, disposal. Translates a `PaperFrame` into GPU state. |
 | `paper-shaders.ts` | Front/reverse face selection, both printed faces, facing-based highlight, sheet fade. |
@@ -54,10 +56,14 @@ its own side, and so on across the eight anchors. `main.ts` measures every
 before the first frame; nothing re-measures while the transition runs.
 
 **The grid shape comes from clustering, not from CSS.** The layout is
-`repeat(auto-fit, minmax(...))`, so `grid-template-columns` resolves to a track
-list whose length depends on the viewport, and parsing it would mean re-deriving
-the browser's own placement algorithm. Instead `gridPositionFromRects()` clusters
-the measured `top` values into rows and the `left` values into columns.
+`repeat(var(--grid-columns), minmax(0, 1fr))`, and `--grid-columns` is written by
+`app.ts` from the tile count and the width available — the ideal shape for that
+many tiles, capped by how many columns fit. Reading that variable back would be
+trusting a second source of truth for something the browser has already decided:
+it says how many tracks were *asked for*, not where the tiles *are*, and a tile
+below the fold, a partial last row, or a collapsed tile would all still have to be
+accounted for. Instead `gridPositionFromRects()` clusters the measured `top`
+values into rows and the `left` values into columns.
 Unmeasurable tiles — zero width or height, non-finite edges — are filtered out
 first so they invent no phantom rows.
 
@@ -399,12 +405,23 @@ elsewhere. They must be regenerated whenever the intended motion changes, and
 reviewed by eye rather than merely accepted.
 
 The two midline checkpoints run at a 400px viewport on tile 1, not at the corner
-suite's 1280px. With only three tiles, a tile resolving `top-center` is reachable
-in exactly one shape: the single column of three rows the grid collapses to below
-its 600px breakpoint, where the interior tile is the row centre. At 1280px the
-three tiles form a single row and no tile resolves `top-center` at all. Their
-screenshots are therefore a different size from the corner baselines, which is
-fine — they are new names with no prior baseline to match.
+suite's 1280px. With three tiles, a tile resolving `top-center` is reachable in
+exactly one shape: the single column of three rows a narrow grid folds down to,
+where the interior tile is the row centre. At 1280px the three tiles form a single
+row and no tile resolves `top-center` at all. Their screenshots are therefore a
+different size from the corner baselines, which is fine — they are new names with
+no prior baseline to match.
+
+**The tile count is a control, but three is still the default.** The grid can be
+dialled from 1 to 16 tiles, which is how a 3 × 3 — the smallest shape reaching all
+eight anchors — gets inspected at all. Every browser and visual expectation is
+written against the default, so the layout rule has to reproduce the old
+`repeat(auto-fit, minmax(min(100%, 240px), 1fr))` column count exactly for three
+tiles at every width: `1 × 3` at 1280px, `2 × 2` at 700px, `3 × 1` at 400px. That
+parity is asserted directly in `tests/unit/tile-grid.test.ts`, so breaking it fails
+a named unit test in a second rather than six screenshots in a minute. It is also
+why the hero copy is unchanged: the hero sits above the grid in every baseline, so
+one added sentence reflows all six frames.
 
 The four corner baselines must themselves be regenerated and reviewed by eye.
 `main.ts` used to hardcode `top-right` for every tile; tile 0 at the corner
