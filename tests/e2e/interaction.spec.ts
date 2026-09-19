@@ -10,7 +10,81 @@ type PaperTurnPageWindow = Window & {
 };
 
 const FULL_CLIP = 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)';
-const CLOSED_TOP_RIGHT_CLIP = 'polygon(100% 0%, 100% 0%, 100% 0%)';
+
+/**
+ * The eight grab anchors, and the pattern the published value must match. The
+ * four rect-corner names are a subset of the eight, so sweeping this list also
+ * sweeps every legacy corner value an author might have written.
+ */
+const GRAB_ANCHOR_NAMES = [
+  'top-left',
+  'top-center',
+  'top-right',
+  'middle-right',
+  'bottom-right',
+  'bottom-center',
+  'bottom-left',
+  'middle-left',
+] as const;
+
+type GrabAnchorName = (typeof GRAB_ANCHOR_NAMES)[number];
+
+const GRAB_ANCHOR_PATTERN = new RegExp(`^(?:${GRAB_ANCHOR_NAMES.join('|')})$`);
+
+/**
+ * The degenerate three-point clip the coordinator writes on the hidden detail
+ * surface for each anchor: the anchor's own unit-square coordinate, in percent,
+ * repeated three times. Authored here from the anchor names rather than imported
+ * from the coordinator, so a change to the percentage mapping fails this suite
+ * instead of agreeing with itself.
+ */
+const CLOSED_CLIP: Record<GrabAnchorName, string> = {
+  'top-left': 'polygon(0% 0%, 0% 0%, 0% 0%)',
+  'top-center': 'polygon(50% 0%, 50% 0%, 50% 0%)',
+  'top-right': 'polygon(100% 0%, 100% 0%, 100% 0%)',
+  'middle-right': 'polygon(100% 50%, 100% 50%, 100% 50%)',
+  'bottom-right': 'polygon(100% 100%, 100% 100%, 100% 100%)',
+  'bottom-center': 'polygon(50% 100%, 50% 100%, 50% 100%)',
+  'bottom-left': 'polygon(0% 100%, 0% 100%, 0% 100%)',
+  'middle-left': 'polygon(0% 50%, 0% 50%, 0% 50%)',
+};
+
+/**
+ * The anchor each demo tile resolves, by the grid shape the three tiles measure
+ * into. The demo lays out exactly three tiles, so only these three shapes are
+ * reachable, and each project meets a different one at its own device width:
+ * `chromium-desktop` lands on the single row, both mobile projects on the single
+ * column. Written out per tile index so the closed-clip assertions below stay
+ * literal without pinning a viewport, and read as a cross-check of the anchors
+ * the dedicated resolution tests assert against the published attribute.
+ */
+const DEMO_TILE_ANCHORS: Record<string, readonly GrabAnchorName[]> = {
+  // One row of three columns: degenerate, so the row's ends take bottom corners
+  // and its centre tile takes the middle-band edge anchor.
+  '1x3': ['bottom-left', 'middle-left', 'bottom-right'],
+  // Two rows of two columns, the only non-degenerate shape three tiles reach.
+  '2x2': ['top-left', 'top-right', 'bottom-left'],
+  // One column of three rows: degenerate the other way.
+  '3x1': ['top-right', 'top-center', 'bottom-right'],
+};
+
+/**
+ * Viewports chosen from the demo's measured layout, not from the media queries:
+ * the grid is `repeat(auto-fit, minmax(min(100%, 240px), 1fr))` over three tiles
+ * with a 24px gap, inside a surface padded by `clamp(24px, 5vw, 72px)`.
+ *
+ * - 1280px lays the three tiles out in a single row of three columns.
+ * - 700px fits two columns, so the three tiles form two rows, and stays clear of
+ *   the 600px breakpoint that would collapse the grid to one column.
+ * - 400px is below that breakpoint, so the grid is one column of three rows —
+ *   the same shape both mobile projects lay out at their own device widths.
+ */
+const THREE_COLUMN_VIEWPORT = { width: 1280, height: 900 };
+const TWO_COLUMN_VIEWPORT = { width: 700, height: 900 };
+const SINGLE_COLUMN_VIEWPORT = { width: 400, height: 900 };
+
+/** The turn has to still be in flight when the anchor is read. */
+const ANCHOR_PROBE_QUERY = '/?duration=8000';
 
 function cardTrigger(page: Page, index: number) {
   return page.locator('[data-card-trigger]').nth(index);
@@ -123,6 +197,70 @@ async function waitForFallbackPastMidpoint(page: Page, direction: 'open' | 'clos
     direction,
     { timeout: 8_000 },
   );
+}
+
+/**
+ * The shape of the grid as laid out, reduced to the two counts the anchor
+ * resolution turns on. This is a precondition check on the CSS, not a second
+ * implementation of the resolver: the anchor itself is always read from the
+ * overlay dataset rather than derived from pixels here.
+ */
+async function measuredGridShape(page: Page) {
+  return page.locator('[data-card-trigger]').evaluateAll((elements) => {
+    const rects = elements.map((element) => element.getBoundingClientRect());
+    return {
+      tileCount: rects.length,
+      rowCount: new Set(rects.map((rect) => Math.round(rect.top))).size,
+      columnCount: new Set(rects.map((rect) => Math.round(rect.left))).size,
+    };
+  });
+}
+
+/**
+ * The closed clip the coordinator must write for a given tile, derived from the
+ * grid shape the tiles currently measure into rather than from a pinned anchor.
+ *
+ * Must be called while the page is idle and the tiles are laid out, since it
+ * measures them. The fallback and reduced-motion paths create no overlay, so
+ * `publishedAnchorForTile` is unavailable on exactly the paths that need this.
+ */
+async function closedClipForTile(page: Page, index: number): Promise<string> {
+  const { tileCount, rowCount, columnCount } = await measuredGridShape(page);
+  const shape = `${rowCount}x${columnCount}`;
+  const anchors = DEMO_TILE_ANCHORS[shape];
+
+  if (anchors === undefined) {
+    throw new Error(`No expected anchors authored for a ${shape} grid of ${tileCount} demo tiles`);
+  }
+
+  const anchor = anchors[index];
+
+  if (anchor === undefined) {
+    throw new Error(`No expected anchor authored for tile ${index} of a ${shape} grid`);
+  }
+
+  return CLOSED_CLIP[anchor];
+}
+
+/**
+ * Activate one tile, read the anchor the renderer published for that activation,
+ * then cancel back to idle so the next activation measures the same layout.
+ *
+ * The renderer writes `overlay.dataset.grabAnchor` when it creates the overlay,
+ * before the first animation frame, so the attribute is already present the
+ * moment the element exists.
+ */
+async function publishedAnchorForTile(page: Page, index: number): Promise<string | null> {
+  await cardTrigger(page, index).click();
+  await expect(overlay(page)).toHaveCount(1);
+  await expect(overlay(page)).toHaveAttribute('data-grab-anchor', GRAB_ANCHOR_PATTERN);
+  const anchor = await overlay(page).getAttribute('data-grab-anchor');
+
+  await page.keyboard.press('Escape');
+  await expect(root(page)).toHaveAttribute('data-transition-state', 'idle');
+  await expect(overlay(page)).toHaveCount(0);
+
+  return anchor;
 }
 
 async function fullMotionDetailSnapshot(page: Page) {
@@ -263,6 +401,8 @@ test('reduced motion and explicit fallback reset the hidden detail clip before r
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/?duration=2000');
 
+  const reducedMotionClosedClip = await closedClipForTile(page, 0);
+
   await cardTrigger(page, 0).click();
   await expect(detailSurface(page)).toBeVisible();
   await expect(detailHeading(page)).toHaveText('Spectrum foundations');
@@ -272,7 +412,7 @@ test('reduced motion and explicit fallback reset the hidden detail clip before r
   await expect(detailSurface(page)).toBeHidden();
   await expect(root(page)).toHaveAttribute('data-transition-state', 'idle');
   await expect(overlay(page)).toHaveCount(0);
-  await expect.poll(() => detailInlineClip(page)).toBe(CLOSED_TOP_RIGHT_CLIP);
+  await expect.poll(() => detailInlineClip(page)).toBe(reducedMotionClosedClip);
 
   await cardTrigger(page, 0).click();
   await expect(detailSurface(page)).toBeVisible();
@@ -283,6 +423,12 @@ test('reduced motion and explicit fallback reset the hidden detail clip before r
 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto('/?fallback=1');
+
+  // The second tile, so the assertion also covers an anchor other than the one
+  // the first tile resolves: a single row gives tile 1 a middle-band edge anchor
+  // where tile 0 takes a corner.
+  const fallbackClosedClip = await closedClipForTile(page, 1);
+
   await cardTrigger(page, 1).click();
   await expect(detailSurface(page)).toBeVisible();
   await expect(detailHeading(page)).toHaveText('Workflow patterns');
@@ -292,7 +438,7 @@ test('reduced motion and explicit fallback reset the hidden detail clip before r
   await expect(detailSurface(page)).toBeHidden();
   await expect(root(page)).toHaveAttribute('data-transition-state', 'idle');
   await expect(overlay(page)).toHaveCount(0);
-  await expect.poll(() => detailInlineClip(page)).toBe(CLOSED_TOP_RIGHT_CLIP);
+  await expect.poll(() => detailInlineClip(page)).toBe(fallbackClosedClip);
 
   await cardTrigger(page, 1).click();
   await expect(detailSurface(page)).toBeVisible();
@@ -305,6 +451,8 @@ test('reduced motion and explicit fallback reset the hidden detail clip before r
 test('Escape late in explicit fallback open settles open and late close settles idle', async ({ page }) => {
   await page.goto('/?fallback=1&duration=10000');
   await setFallbackDurationMs(page, 10_000);
+
+  const closedClip = await closedClipForTile(page, 0);
 
   await cardTrigger(page, 0).click();
   await expect(detailSurface(page)).toBeVisible();
@@ -348,7 +496,7 @@ test('Escape late in explicit fallback open settles open and late close settles 
     expect(cardTrigger(page, 0)).toBeFocused({ timeout: 1_800 }),
     expect(detailSurface(page)).toBeHidden({ timeout: 1_800 }),
     expect(overlay(page)).toHaveCount(0, { timeout: 1_800 }),
-    expect.poll(() => detailInlineClip(page), { timeout: 1_800 }).toBe(CLOSED_TOP_RIGHT_CLIP),
+    expect.poll(() => detailInlineClip(page), { timeout: 1_800 }).toBe(closedClip),
     expect
       .poll(async () => (await fallbackAnimationSnapshot(page)).animationCount, { timeout: 1_800 })
       .toBe(0),
@@ -358,6 +506,8 @@ test('Escape late in explicit fallback open settles open and late close settles 
 test('mixed fallback close cleanup does not poison the next full-motion reopen', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto('/?duration=120');
+
+  const closedClip = await closedClipForTile(page, 0);
 
   await openCardAndExpectHeading(page, 0, 'Spectrum foundations');
 
@@ -402,7 +552,7 @@ test('mixed fallback close cleanup does not poison the next full-motion reopen',
     expect
       .poll(async () => (await fallbackAnimationSnapshot(page)).animationCount, { timeout: 4_500 })
       .toBe(0),
-    expect.poll(() => detailInlineClip(page), { timeout: 4_500 }).toBe(CLOSED_TOP_RIGHT_CLIP),
+    expect.poll(() => detailInlineClip(page), { timeout: 4_500 }).toBe(closedClip),
   ]);
 
   const postCloseDetailState = await fullMotionDetailSnapshot(page);
@@ -499,4 +649,85 @@ test('the close button label stays on one line when its width is squeezed', asyn
 
   expect(measured.whiteSpace).toBe('nowrap');
   expect(measured.squeezedHeight).toBeCloseTo(measured.naturalHeight, 1);
+});
+
+test('desktop widths publish the anchor the measured grid position implies', async ({ page }) => {
+  await page.goto(ANCHOR_PROBE_QUERY);
+
+  // Two columns, so the three tiles occupy two rows and the first tile is
+  // genuinely in the top-left band rather than in a degenerate single row.
+  await page.setViewportSize(TWO_COLUMN_VIEWPORT);
+  await expect.poll(() => measuredGridShape(page)).toEqual({ tileCount: 3, rowCount: 2, columnCount: 2 });
+
+  expect(await publishedAnchorForTile(page, 0)).toBe('top-left');
+  expect(await publishedAnchorForTile(page, 1)).toBe('top-right');
+  expect(await publishedAnchorForTile(page, 2)).toBe('bottom-left');
+
+  // One row of three columns, which is what the demo lays out at full desktop
+  // width. A single row is degenerate, so the row-centre tile takes the
+  // middle-band edge anchor `middle-left`: the transpose of the single-column
+  // family. `middle-right` needs a true middle row beside a right column, which
+  // is a grid of at least three rows by two columns and so is unreachable with
+  // the demo's three tiles — the band table itself is enumerated exhaustively in
+  // the unit suite.
+  await page.setViewportSize(THREE_COLUMN_VIEWPORT);
+  await expect.poll(() => measuredGridShape(page)).toEqual({ tileCount: 3, rowCount: 1, columnCount: 3 });
+
+  expect(await publishedAnchorForTile(page, 0)).toBe('bottom-left');
+  expect(await publishedAnchorForTile(page, 1)).toBe('middle-left');
+});
+
+test('the mobile single-column grid resolves top-right, top-center, and bottom-right', async ({ page }) => {
+  await page.goto(ANCHOR_PROBE_QUERY);
+
+  await page.setViewportSize(SINGLE_COLUMN_VIEWPORT);
+  await expect.poll(() => measuredGridShape(page)).toEqual({ tileCount: 3, rowCount: 3, columnCount: 1 });
+
+  expect(await publishedAnchorForTile(page, 0)).toBe('top-right');
+  expect(await publishedAnchorForTile(page, 1)).toBe('top-center');
+  expect(await publishedAnchorForTile(page, 2)).toBe('bottom-right');
+});
+
+test('an authored data-grabbed-corner attribute cannot move the published anchor', async ({ page }) => {
+  // Twelve activations, each capturing the page before its overlay appears.
+  // Comfortable locally, but not inside the default budget on a shared runner.
+  test.setTimeout(90_000);
+
+  const consoleNoise: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') {
+      consoleNoise.push(`${message.type()}: ${message.text()}`);
+    }
+  });
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => {
+    pageErrors.push(error.message);
+  });
+
+  await page.goto(ANCHOR_PROBE_QUERY);
+  await page.setViewportSize(SINGLE_COLUMN_VIEWPORT);
+  await expect.poll(() => measuredGridShape(page)).toEqual({ tileCount: 3, rowCount: 3, columnCount: 1 });
+
+  const baseline = await publishedAnchorForTile(page, 0);
+  expect(baseline).toBe('top-right');
+
+  // Every anchor name — the four rect corners among them — plus an empty and an
+  // unrecognized string. The tile's grid position never changes, so each sweep
+  // step also re-asserts that repeated activations of one tile over an unchanged
+  // layout resolve the same anchor.
+  for (const authored of [...GRAB_ANCHOR_NAMES, '', 'sideways']) {
+    await cardTrigger(page, 0).evaluate((element, value) => {
+      element.setAttribute('data-grabbed-corner', value);
+    }, authored);
+
+    expect(await publishedAnchorForTile(page, 0), `authored data-grabbed-corner="${authored}"`).toBe(baseline);
+  }
+
+  await cardTrigger(page, 0).evaluate((element) => {
+    element.removeAttribute('data-grabbed-corner');
+  });
+  expect(await publishedAnchorForTile(page, 0)).toBe(baseline);
+
+  expect(pageErrors).toEqual([]);
+  expect(consoleNoise.filter((entry) => /anchor|corner|grab/i.test(entry))).toEqual([]);
 });

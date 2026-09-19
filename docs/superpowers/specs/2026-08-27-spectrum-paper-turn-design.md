@@ -2,12 +2,12 @@
 
 **Status:** Approved
 **Date:** 2026-08-27
-**Revised:** 2026-08-28 — corner-exchange geometry clarified after review of the first
-implementation. See [Revision history](#revision-history).
+**Revised:** 2026-08-30 — the grabbed corner became a position-derived grab anchor over
+eight anchors and two fold-axis families. See [Revision history](#revision-history).
 
 ## Purpose
 
-This prototype will demonstrate whether a Spectrum-style card can animate into a full-viewport detail surface as a realistic diagonal sheet-of-paper turn. It is an interaction and rendering proof of concept, not a replacement for Spectrum components or application navigation.
+This prototype will demonstrate whether a Spectrum-style card can animate into a full-viewport detail surface as a realistic sheet-of-paper turn. It is an interaction and rendering proof of concept, not a replacement for Spectrum components or application navigation.
 
 The prototype succeeds only if the transition reads as one continuous paper sheet changing shape while the underlying detail page is progressively revealed. The settled list and detail states must remain normal, accessible Spectrum Web Components DOM rather than WebGL-rendered application UI.
 
@@ -17,7 +17,8 @@ The prototype covers:
 
 - Opening a detail surface from a card with mouse, touch, or keyboard activation.
 - Reversing the same transition to close the detail surface.
-- A configurable grabbed corner, with geometry generalized to all four corners.
+- A grab anchor derived from the tile's live measured position in the card grid, with
+  geometry generalized to all four corners and all four edge midpoints.
 - A lightweight WebGL paper mesh used only during the transition.
 - An accessible DOM fallback when full motion is unavailable or inappropriate.
 - Focus, scroll, interruption, resize, failure recovery, and reduced-motion behavior.
@@ -28,36 +29,59 @@ The prototype does not define production navigation, data loading, deep linking,
 
 When a card is activated, its visual appearance becomes a temporary turning sheet above the destination detail DOM.
 
-The transition is defined by two diagonally opposite corners:
+The transition is defined by an anchor and its geometric opposite:
 
-- The **grabbed corner** begins at the configured source-card corner, is pulled forward as
-  though lifted off the surface, and travels across the sheet to finish at the diagonally
-  opposite corner of the full-viewport destination.
-- The **original opposite corner** tucks underneath the leading half and finishes at the
-  destination position corresponding to the grabbed corner.
-- At the end of the turn, those diagonal corners have visibly exchanged positions.
+- The **grab anchor** begins at the source-card anchor resolved for that tile, is pulled
+  forward as though lifted off the surface, and travels across the sheet to finish at the
+  opposite anchor of the full-viewport destination.
+- The **pivot anchor** — the grab anchor's point reflection through the rectangle center —
+  tucks underneath the leading half and finishes at the destination position corresponding
+  to the grab anchor.
+- At the end of the turn, that pair has visibly exchanged positions.
+
+The anchor vocabulary is eight values: the four corners `top-left`, `top-right`,
+`bottom-right`, `bottom-left`, and the four edge midpoints `top-center`, `middle-right`,
+`bottom-center`, `middle-left`. The rectangle center `(0.5, 0.5)` is deliberately assigned
+to no anchor: a sheet grabbed at its own center has no fold axis to turn about. Which
+anchor a tile uses is not authored. It is derived at activation time from the tile's live
+measured position in the grid, so the same markup grabs differently as the grid reflows.
 
 The exchange is expressed as a **single coherent rotation of a growing sheet**, not as an
 interpolation toward a hand-built end quad. Throughout the turn the sheet's footprint remains
 a proper, non-self-intersecting rectangle that grows from the source card to the destination
-viewport, so the sheet becomes the page rather than being swapped for it. The two corners on
-the fold axis stay put in that growing frame while the off-diagonal pair rotate past each
+viewport, so the sheet becomes the page rather than being swapped for it. The two anchors on
+the fold axis stay put in that growing frame while the grab and pivot pair rotate past each
 other.
 
-Because a half-turn about a rectangle's diagonal only exchanges the off-diagonal corners when
-the rectangle is square, the rotation is defined in normalized card space and mapped back into
-viewport pixels. Implementations must not reflect across the pixel-space diagonal; doing so
-produces a self-intersecting sheet that stalls partway through and never resolves into the
-destination rectangle.
+The fold axis is the line joining the two anchors of the grab anchor's own family that are
+neither the grab anchor nor the pivot, which gives two axis families:
 
-This corner exchange is a required geometric property, not an incidental visual effect. The
-renderer must derive orientation, fold direction, and corner trajectories from the configured
-grabbed corner rather than hard-coding top-right behavior.
+- A **diagonal fold** for a corner anchor, about the main diagonal `u = v` or the
+  anti-diagonal `u + v = 1` of the normalized card square.
+- A **midline fold** for an edge-midpoint anchor, about the horizontal midline `v = 0.5` or
+  the vertical midline `u = 0.5`.
+
+Because a half-turn about a rectangle's diagonal only exchanges the off-diagonal corners when
+the rectangle is square, the diagonal family is defined in normalized card space and mapped
+back into viewport pixels. Implementations must not reflect across the pixel-space diagonal;
+doing so produces a self-intersecting sheet that stalls partway through and never resolves
+into the destination rectangle.
+
+The midline family carries no such hazard. Mirroring about a rectangle's horizontal or
+vertical centerline is exact in pixel space at every aspect ratio, so a midline fold would be
+correct computed either way. It is kept in normalized card space regardless, so that both
+families share one deformation path rather than two.
+
+Anchor exchange is a required geometric property, not an incidental visual effect, and it
+holds for all eight anchors. The renderer must derive orientation, fold direction, and anchor
+trajectories from the resolved grab anchor rather than hard-coding top-right behavior. Only
+the choice of fold-axis endpoints varies with the anchor: the per-vertex deformation reads the
+fold basis alone and never branches on the axis family.
 
 The stationary full-page detail DOM is placed beneath the turning sheet before animation
 begins. Because the sheet is printed with the destination page on its reverse face, the sheet
 itself performs the reveal: the page becomes progressively visible as the turn exposes more of
-that reverse face along the moving diagonal fold.
+that reverse face along the moving fold.
 
 The live destination DOM stays fully covered for the duration of the turn and is uncovered only
 when the sheet lands, where the sheet's geometry matches the destination rectangle exactly and
@@ -114,11 +138,11 @@ Only valid state transitions are accepted. The coordinator prevents overlapping 
 `PaperTurnRenderer` owns the temporary WebGL overlay. It accepts:
 
 - Source and destination rectangles in viewport coordinates.
-- The configured grabbed corner.
+- The resolved grab anchor, one of the eight anchor values.
 - Normalized progress from `0` to `1`.
 - Texture and motion parameters supplied by `MotionProfile`.
 
-It maps a capture of the source card onto a modest subdivided mesh and computes the sheet deformation, moving diagonal fold, corner exchange, curved boundaries, front and reverse faces, changing illumination, cast shadow, and destination reveal mask. The renderer is short-lived: it is created for a transition and disposed when the transition settles or falls back.
+It maps a capture of the source card onto a modest subdivided mesh and computes the sheet deformation, moving fold, anchor exchange, curved boundaries, front and reverse faces, changing illumination, cast shadow, and destination reveal mask. The renderer is short-lived: it is created for a transition and disposed when the transition settles or falls back.
 
 ### Source capture fidelity
 
@@ -138,7 +162,7 @@ the duration of the turn.
 - Mesh density and texture size/DPR limits.
 - Reduced-motion behavior.
 
-The initial full-motion target is approximately 650-800 ms, long enough for the diagonal exchange and reverse face to be legible without making navigation feel stalled. The fallback target is 180-220 ms.
+The initial full-motion target is approximately 650-800 ms, long enough for the anchor exchange and reverse face to be legible without making navigation feel stalled. The fallback target is 180-220 ms.
 
 `MotionProfile` holds values a designer would plausibly retune. Constants that define the
 *shape* of the motion model itself — perspective strength, facing floor, arc bulge, shadow lift
@@ -214,8 +238,13 @@ WebGL initialization, texture capture, resource allocation, and animation failur
 Unit coverage will verify:
 
 - Valid coordinator state transitions and rejection of overlap.
-- Opening/closing timeline symmetry and corner-path reversal.
-- Generalized corner selection and diagonal corner exchange.
+- Opening/closing timeline symmetry and anchor-path reversal.
+- Position-based anchor resolution, exhaustively over the grid shapes and cells it can be
+  asked about, including the degenerate single-row, single-column, and single-tile shapes and
+  malformed input that has to resolve to something rather than throw.
+- Anchor exchange across all eight anchors, plus the destination-frame reflection it follows
+  from, both axis families sharing one deformation path, and midline exactness swept over
+  independently varying aspect ratios.
 - Focus restoration to the source or list-container fallback.
 - Full-motion versus fallback selection, including reduced motion.
 - Capture and WebGL failure cleanup.
@@ -238,18 +267,24 @@ Visual comparisons will capture:
 
 - Start: the sheet aligns with the originating card.
 - Peak curl: curved edges, reverse face, highlights, and shadows are visible.
-- Diagonal midpoint: the destination reads on the sheet's reverse face along the moving fold, the rest of the card list is still visible behind the sheet, and the corner exchange is legible.
+- Turn midpoint: the destination reads on the sheet's reverse face along the moving fold, the rest of the card list is still visible behind the sheet, and the anchor exchange is legible.
+- Midline fold: peak curl and mid-turn for an edge-midpoint grab, which curls about a
+  centerline rather than a diagonal and is the case no corner baseline covers.
 - Settled page: no overlay remains and the detail surface is ordinary Spectrum DOM.
 
 ## Success Criteria
 
 The prototype is successful when all of the following are true:
 
-- The grabbed corner and its diagonal opposite visibly exchange positions.
+- The grab anchor and its opposite anchor exchange positions in the destination frame: the
+  vertex at the grab anchor lands on the destination's pivot anchor and the vertex at the pivot
+  lands on the destination's grab anchor. This holds for all eight anchors, and it is the
+  general statement of what a diagonal corner exchange is a special case of.
 - The sheet grows continuously from the card to the full viewport without stalling, folding
   through itself, or popping to its end state.
-- Full-page content is revealed by the sheet's own reverse face along the moving diagonal fold,
-  with no independent background wipe and no flat panel of page content outside the fold.
+- Full-page content is revealed by the sheet's own reverse face along the moving fold — the
+  diagonal for a corner grab, the centerline for an edge-midpoint grab — with no independent
+  background wipe and no flat panel of page content outside the fold.
 - Curvature, reverse-face treatment, deformation, highlights, and shadows create a plausible paper-like turn.
 - The captured sheet reproduces the source card faithfully, including its text.
 - Opening settles into normal Spectrum detail DOM with no transition overlay.
@@ -274,6 +309,57 @@ A full WebGL scene would offer maximum rendering control and visual fidelity. Ho
 The hybrid approach preserves accessible, responsive Spectrum DOM as the source of truth while using WebGL only where it provides unique value: the short-lived deforming sheet. It provides enough geometric and shading control to evaluate the paper-turn concept without committing the application UI to a canvas-based architecture.
 
 ## Revision history
+
+### 2026-08-30 — the grabbed corner becomes a position-derived grab anchor
+
+A corner chosen at authoring time made every tile turn identically. A card in the middle of
+the grid was grabbed from the same corner as a card on the edge, which reads as a property of
+the renderer rather than a property of the card. The anchor is now derived at activation from
+the tile's live measured position, so a left-edge tile is grabbed from its left, a top-row tile
+from its top, and a tile with no edge affinity from its top edge midpoint.
+
+Deriving the anchor from position forces the vocabulary open. Four corners cannot express "the
+left side of this tile," so the vocabulary widens to eight anchors: the four corners plus the
+four edge midpoints. The rectangle center is assigned to no anchor, because a sheet grabbed at
+its center has no fold axis. The pivot stays derived rather than configured — it is the point
+reflection of the grab anchor through the rectangle center — so every anchor has exactly one
+opposite and exactly one fold axis.
+
+That second half of the vocabulary brings a second fold-axis family. A corner anchor folds
+about a diagonal; an edge-midpoint anchor folds about a centerline. Notably, the hazard the
+2026-08-28 revision recorded does not apply to the new family: a centerline mirror is exact in
+pixel space at any aspect ratio, where a diagonal mirror is exact only for a square. The
+midline family is kept in normalized card space anyway, purely so both families share one
+deformation path. Only the fold-axis endpoints vary with the anchor, and the per-vertex
+deformation reads the fold basis alone, so no motion tunable needed retuning and corner output
+moved by less than a pixel.
+
+Two consequences were accepted rather than designed away:
+
+- **Three fold behaviors in one row.** A five-column grid has a genuine center column, so its
+  top row shows a diagonal fold from the left corner, a midline fold from the top edge
+  midpoint, and a diagonal fold from the right corner, side by side. That is what
+  position-derived anchors mean; it is not a defect.
+- **The mesh must be even in both dimensions.** An edge midpoint's coordinate of `0.5` only
+  lands on a real mesh vertex when the corresponding dimension is even. The shipped 20 × 14
+  mesh already satisfies this, and the constraint is now validated rather than assumed, so a
+  future retune fails loudly instead of sampling the wrong vertex.
+
+Two implementation details are worth recording because they are not obvious from the geometry.
+Grid position is recovered by clustering the measured tile rectangles' top and left values
+under a small tolerance, not by parsing the CSS grid template: clustering is what makes the
+resolution independent of how the layout was authored. And the reveal sweep was restated in
+terms of distance from the fold rather than an L1 distance from the grab point. The old metric
+was the fold-parallel sweep in disguise for corners, but for an edge midpoint it emitted a clip
+path with no points at all early in the turn, which is invalid CSS.
+
+The authoring override was removed outright rather than deprecated. Nothing — no attribute, no
+constant, no parameter — can now disagree with the resolved anchor; an authored value is simply
+inert. The resolved anchor is published on the overlay element as its single diagnostic
+carrier, which is what makes the resolution observable without a debug surface.
+
+Nothing in the architecture, accessibility, resilience, performance, or fallback sections
+changed.
 
 ### 2026-08-29 — the sheet performs the reveal
 

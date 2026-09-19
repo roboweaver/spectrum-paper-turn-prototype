@@ -15,7 +15,8 @@ import { createAnimationSpeedController } from './debug/animation-speed';
 import { isDebugPanelVisible, syncDebugParam } from './debug/debug-visibility';
 import { mountDebugPanel } from './debug/debug-panel';
 import { TransitionCoordinator } from './transition/transition-coordinator';
-import type { Corner, MotionProfile } from './transition/types';
+import { resolveGrabAnchor } from './transition/grab-anchor';
+import type { MotionProfile, Rect } from './transition/types';
 
 declare global {
   interface Window {
@@ -26,16 +27,26 @@ declare global {
   }
 }
 
-const DEFAULT_CORNER: Corner = 'top-right';
+/**
+ * Measure every tile in the grid, in document order, so the activated tile's
+ * grid position can be recovered from the layout the user can actually see.
+ *
+ * Each `[data-card-trigger]` element's bounding rect is read exactly once, which
+ * makes this a single layout pass costing `O(tiles)`. It runs on activation, not
+ * per frame, and the returned `triggers` list shares the index space of `rects`,
+ * so `triggers.indexOf(trigger)` locates the activated tile.
+ *
+ * The anchor is derived from position alone: no element attribute, constant, or
+ * runtime parameter can override it.
+ */
+function measureTiles(root: HTMLElement): { triggers: HTMLElement[]; rects: Rect[] } {
+  const triggers = Array.from(root.querySelectorAll<HTMLElement>('[data-card-trigger]'));
+  const rects = triggers.map((trigger) => {
+    const { left, top, width, height } = trigger.getBoundingClientRect();
+    return { left, top, width, height };
+  });
 
-function resolveGrabbedCorner(trigger: HTMLElement): Corner {
-  const { grabbedCorner } = trigger.dataset;
-  return grabbedCorner === 'top-left' ||
-      grabbedCorner === 'top-right' ||
-      grabbedCorner === 'bottom-right' ||
-      grabbedCorner === 'bottom-left'
-    ? grabbedCorner
-    : DEFAULT_CORNER;
+  return { triggers, rects };
 }
 
 function createMotionProfile(searchParams: URLSearchParams): MotionProfile {
@@ -106,11 +117,17 @@ for (const trigger of root.querySelectorAll<HTMLElement>('[data-card-trigger]'))
       return;
     }
 
+    // Measurement and resolution both complete synchronously here, before the
+    // coordinator schedules the first animation frame, so no layout read is
+    // attributable to the frame loop and none happens again while the turn runs.
+    const { triggers, rects } = measureTiles(root);
+    const grabAnchor = resolveGrabAnchor(rects, triggers.indexOf(trigger));
+
     runCoordinatorAction(
       'open',
       coordinator.open({
         sourceId,
-        grabbedCorner: resolveGrabbedCorner(trigger),
+        grabAnchor,
         trigger,
       }),
     );

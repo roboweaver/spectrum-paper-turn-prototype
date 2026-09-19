@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { validateProfile } from '../../src/transition/geometry';
 import { defaultMotionProfile } from '../../src/transition/motion-profile';
 
 function assertDefaultMotionProfileIsReadonly(): void {
@@ -26,6 +27,23 @@ describe('defaultMotionProfile', () => {
     expect(defaultMotionProfile.maxTextureDpr).toBeLessThanOrEqual(2);
     expect(defaultMotionProfile.maxTexturePixels).toBe(4_194_304);
     expect(Object.isFrozen(defaultMotionProfile)).toBe(true);
+  });
+
+  // An edge-midpoint grab anchor's uv carries a component of exactly 0.5, which
+  // only addresses a real mesh vertex when the matching dimension is even. A
+  // future tuning change to an odd density should trip this named test rather
+  // than throw out of validateProfile() at activation time.
+  it('ships an even mesh so every edge-midpoint anchor is addressable', () => {
+    expect(defaultMotionProfile.meshColumns).toBe(20);
+    expect(defaultMotionProfile.meshRows).toBe(14);
+    expect(defaultMotionProfile.meshColumns % 2).toBe(0);
+    expect(defaultMotionProfile.meshRows % 2).toBe(0);
+    expect(defaultMotionProfile.meshColumns).toBeGreaterThanOrEqual(2);
+    expect(defaultMotionProfile.meshRows).toBeGreaterThanOrEqual(2);
+  });
+
+  it('passes the profile validator without throwing', () => {
+    expect(() => validateProfile(defaultMotionProfile)).not.toThrow();
   });
 
   it('has a monotonic easing with exact endpoints', () => {

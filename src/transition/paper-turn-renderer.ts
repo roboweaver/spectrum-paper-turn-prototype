@@ -12,7 +12,7 @@ import {
   WebGLRenderer,
 } from 'three';
 
-import { backFaceUvs, buildPaperFrame } from './geometry';
+import { backFaceUvs, buildPaperFrame, validateProfile } from './geometry';
 import { paperTurnFragmentShader, paperTurnVertexShader } from './paper-shaders';
 import type { PaperFrame, PaperRenderer, Rect, RendererInput } from './types';
 
@@ -158,8 +158,10 @@ export class PaperTurnRenderer implements PaperRenderer {
   private disposed = false;
 
   constructor(input: RendererInput, documentRef: Document = document) {
-    validatePositiveInteger(input.profile.meshColumns, 'profile.meshColumns');
-    validatePositiveInteger(input.profile.meshRows, 'profile.meshRows');
+    // Validate before anything is allocated: an odd mesh dimension has to fail
+    // here, into the coordinator's full-motion fallback, rather than leave a
+    // half-built overlay or throw part-way through the turn.
+    validateProfile(input.profile);
     validatePositiveNumber(input.profile.maxTextureDpr, 'profile.maxTextureDpr');
     validateUnitInterval(input.profile.shadowStrength, 'profile.shadowStrength');
     validateRect(input.sourceRect, 'sourceRect');
@@ -185,6 +187,10 @@ export class PaperTurnRenderer implements PaperRenderer {
       const overlay = documentRef.createElement('div');
       overlay.className = 'paper-turn-overlay';
       overlay.dataset.meshVertices = String(vertexCount);
+      // The overlay dataset is the only carrier of the resolved anchor: it is
+      // written before the first frame and never rewritten, so an interaction
+      // test can read the resolution without inspecting pixels.
+      overlay.dataset.grabAnchor = input.grabAnchor;
       overlay.setAttribute('aria-hidden', 'true');
       overlay.setAttribute('role', 'presentation');
       resources.overlay = overlay;
@@ -222,7 +228,7 @@ export class PaperTurnRenderer implements PaperRenderer {
       geometry.setAttribute(
         'backUv',
         new BufferAttribute(
-          backFaceUvs(input.grabbedCorner, input.profile.meshColumns, input.profile.meshRows),
+          backFaceUvs(input.grabAnchor, input.profile.meshColumns, input.profile.meshRows),
           2,
         ),
       );
@@ -313,7 +319,7 @@ export class PaperTurnRenderer implements PaperRenderer {
     const frame = buildPaperFrame(
       this.input.sourceRect,
       this.input.destinationRect,
-      this.input.grabbedCorner,
+      this.input.grabAnchor,
       progress,
       this.input.profile,
     );
