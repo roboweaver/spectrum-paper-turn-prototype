@@ -94,6 +94,49 @@ sp-card {
   min-height: clamp(180px, calc(990px / var(--grid-columns, 3)), 330px);
 }
 
+/*
+ * Hover/focus affordance: the tile grows a couple of percent so it reads as
+ * clickable.
+ *
+ * The transform sits on `sp-card` — a *descendant* of the trigger — rather than
+ * on the trigger or the grid item, and that placement is load-bearing. A click
+ * always arrives while the tile is hovered, and both the grab-anchor clustering
+ * (`app.measureTiles`) and the turn's start rect
+ * (`DomTransitionView.measureSource`) read `trigger.getBoundingClientRect()`.
+ * A transform on the trigger or an ancestor would grow and offset that rect,
+ * shifting `left` by more than `GRID_CLUSTER_TOLERANCE_PX` on a wide tile and so
+ * risking a different measured column. A transform on a child leaves the
+ * trigger's own border box, and therefore both measurements, untouched.
+ *
+ * 1.02 is chosen to stay inside `--grid-gap`: a tile encroaches on the gap by
+ * 1% of its own width per side, so the 24px gap is not crossed until a tile is
+ * 2400px wide. A hovered tile therefore never reaches its neighbour and no
+ * stacking-order fix is needed.
+ */
+.card-trigger sp-card {
+  transition: transform 140ms ease-out;
+}
+
+.card-trigger:hover sp-card,
+.card-trigger:focus-visible sp-card {
+  transform: scale(1.02);
+}
+
+/*
+ * A turn captures the trigger subtree with html-to-image, and the pointer is
+ * still over the tile at that moment, so the hover scale has to be dropped
+ * first or it would be printed onto the sheet — slightly enlarged and clipped by
+ * the capture box. `transition: none` makes the drop instant rather than letting
+ * the async capture land mid-ease. Equal specificity to the hover rule, so this
+ * must stay below it.
+ */
+[data-transition-state='preparing'] .card-trigger sp-card,
+[data-transition-state='opening'] .card-trigger sp-card,
+[data-transition-state='closing'] .card-trigger sp-card {
+  transform: none;
+  transition: none;
+}
+
 .card-preview {
   width: 100%;
   min-height: clamp(90px, calc(570px / var(--grid-columns, 3)), 190px);
@@ -242,6 +285,10 @@ sp-card {
 
 @media (prefers-reduced-motion: reduce) {
   .detail-surface { will-change: opacity; }
+
+  /* The affordance stays — it is what tells you the tile is clickable — but it
+     arrives instantly instead of easing in. */
+  .card-trigger sp-card { transition: none; }
 }
 
 /* Debug control strip. Mounted on every load; hidden with ?debug=0. */
