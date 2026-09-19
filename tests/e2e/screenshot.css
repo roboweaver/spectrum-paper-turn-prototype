@@ -2,6 +2,12 @@
  * Injected into every `toHaveScreenshot` comparison via `stylePath` in
  * `playwright.config.ts`.
  *
+ * Two kinds of debug chrome are suppressed: the control strip and its re-show
+ * chip, and the per-tile anchor labels. Both are absolutely positioned, so
+ * removing them from the paint reflows nothing. The labels are drawn over the
+ * tile rather than inside the trigger, so they are also absent from the captured
+ * texture — the sheet in a mid-turn baseline carries no label either way.
+ *
  * The debug panel is on by default now, so without this it would appear in
  * every visual baseline — and the committed baselines are darwin-only and are
  * not run in CI, so nothing would have caught the mismatch until someone ran
@@ -16,6 +22,7 @@
  * reflow the document or change the full-page height.
  */
 [data-paper-turn-debug],
-[data-paper-turn-debug-chip] {
+[data-paper-turn-debug-chip],
+[data-paper-turn-anchor-label] {
   display: none !important;
 }

@@ -1,9 +1,15 @@
+import { MAX_TILE_COUNT, MIN_TILE_COUNT } from '../tile-grid';
 import {
   type AnimationSpeedController,
   type AnimationSpeedState,
   formatSpeedReadout,
   SPEED_SLIDER_STEPS,
 } from './animation-speed';
+import {
+  formatTileGridReadout,
+  type TileGridController,
+  type TileGridState,
+} from './tile-grid-control';
 import type { DebugState, TransitionDebugger } from './transition-debugger';
 
 const STEP = 0.01;
@@ -17,6 +23,12 @@ function button(label: string, title: string): HTMLButtonElement {
   return element;
 }
 
+/** The per-tile anchor labels drawn over the grid, as the panel sees them. */
+export interface AnchorLabelToggle {
+  visible(): boolean;
+  setVisible(visible: boolean): void;
+}
+
 export interface DebugPanelOptions {
   /** Whether the panel starts on screen. Defaults to true. */
   readonly visible?: boolean;
@@ -25,6 +37,14 @@ export interface DebugPanelOptions {
    * `main.ts` uses it to keep the URL in step via `history.replaceState`.
    */
   readonly onVisibilityChange?: (visible: boolean) => void;
+  /**
+   * Tile-count control. The section is rendered only when this is supplied, so
+   * the transport and speed controls can still be mounted against a page that
+   * has no tile grid to resize.
+   */
+  readonly tiles?: TileGridController;
+  /** Anchor-label visibility. Rendered only alongside {@link tiles}. */
+  readonly anchorLabels?: AnchorLabelToggle;
 }
 
 /**
@@ -33,8 +53,10 @@ export interface DebugPanelOptions {
  * while the app root carries `data-transition-busy="true"`, which disables
  * pointer events for everything inside it.
  *
- * Carries two sliders: one scrubs position through the current turn, the other
- * retimes the next turn via the shared motion profile.
+ * Carries three sliders: one scrubs position through the current turn, one
+ * retimes the next turn via the shared motion profile, and one sets how many
+ * tiles the grid lays out — which is what decides the anchor each tile is
+ * grabbed by, so it is the control that reaches all eight of them.
  *
  * The panel can be hidden down to a small chip. Both live under one teardown,
  * and hiding only toggles `hidden` — nothing is unmounted, so the turn keeps
@@ -88,6 +110,25 @@ export function mountDebugPanel(
   const speedReset = button('Reset 1x', 'Reset animation speed to 1x (720 ms)');
   speedReset.dataset.debugSpeedReset = 'true';
 
+  const tilesLabel = document.createElement('span');
+  tilesLabel.className = 'paper-turn-debug__label';
+  tilesLabel.textContent = 'Tiles';
+
+  const tilesSlider = document.createElement('input');
+  tilesSlider.type = 'range';
+  tilesSlider.min = String(MIN_TILE_COUNT);
+  tilesSlider.max = String(MAX_TILE_COUNT);
+  tilesSlider.step = '1';
+  tilesSlider.title = `Tiles in the grid (${MIN_TILE_COUNT}–${MAX_TILE_COUNT}) — changes which anchor each tile is grabbed by`;
+  tilesSlider.dataset.debugTiles = 'true';
+
+  const tilesReadout = document.createElement('span');
+  tilesReadout.className = 'paper-turn-debug__readout paper-turn-debug__readout--tiles';
+  tilesReadout.dataset.debugTilesReadout = 'true';
+
+  const anchorLabelsToggle = button('Anchors', 'Show or hide the resolved grab anchor on each tile');
+  anchorLabelsToggle.dataset.debugAnchorLabels = 'true';
+
   const hide = button('Hide', 'Hide the debug panel');
   hide.dataset.debugHide = 'true';
 
@@ -105,12 +146,22 @@ export function mountDebugPanel(
     speedSlider,
     speedReadout,
     speedReset,
-    hide,
   );
+
+  if (options.tiles) {
+    panel.append(tilesLabel, tilesSlider, tilesReadout);
+
+    if (options.anchorLabels) {
+      panel.append(anchorLabelsToggle);
+    }
+  }
+
+  panel.append(hide);
   parent.append(panel, chip);
 
   let dragging = false;
   let draggingSpeed = false;
+  let draggingTiles = false;
   let visible = options.visible ?? true;
 
   const renderSpeed = (state: AnimationSpeedState): void => {
@@ -119,6 +170,20 @@ export function mountDebugPanel(
     }
 
     speedReadout.textContent = formatSpeedReadout(state);
+  };
+
+  const renderTiles = (state: TileGridState): void => {
+    if (!draggingTiles) {
+      tilesSlider.value = String(state.tileCount);
+    }
+
+    tilesReadout.textContent = formatTileGridReadout(state);
+  };
+
+  const renderAnchorLabels = (): void => {
+    const on = options.anchorLabels?.visible() ?? false;
+    anchorLabelsToggle.setAttribute('aria-pressed', String(on));
+    anchorLabelsToggle.dataset.on = String(on);
   };
 
   const render = (state: DebugState): void => {
@@ -132,6 +197,11 @@ export function mountDebugPanel(
     speedSlider.disabled = state.active;
     speedReset.disabled = state.active;
 
+    // Changing the tile count re-renders the grid, which would detach the
+    // trigger the coordinator is holding for focus restore, so it waits for the
+    // turn to settle for the same reason the speed control does.
+    tilesSlider.disabled = state.active;
+
     if (!dragging) {
       slider.value = String(Math.round(state.position * SLIDER_STEPS));
     }
@@ -143,6 +213,8 @@ export function mountDebugPanel(
 
   const unsubscribe = controller.subscribe(render);
   const unsubscribeSpeed = speed.subscribe(renderSpeed);
+  const unsubscribeTiles = options.tiles?.subscribe(renderTiles) ?? (() => {});
+  renderAnchorLabels();
 
   const applyVisibility = (): void => {
     panel.hidden = !visible;
@@ -167,6 +239,17 @@ export function mountDebugPanel(
   const onScrub = (): void => controller.scrubTo(Number(slider.value) / SLIDER_STEPS);
   const onSpeed = (): void => speed.setSliderIndex(Number(speedSlider.value));
   const onSpeedReset = (): void => speed.reset();
+  const onTiles = (): void => options.tiles?.setTileCount(Number(tilesSlider.value));
+  const onAnchorLabels = (): void => {
+    const anchorLabels = options.anchorLabels;
+
+    if (!anchorLabels) {
+      return;
+    }
+
+    anchorLabels.setVisible(!anchorLabels.visible());
+    renderAnchorLabels();
+  };
   const onHide = (): void => setVisible(false);
   const onShow = (): void => setVisible(true);
   const onDragStart = (): void => {
@@ -180,6 +263,12 @@ export function mountDebugPanel(
   };
   const onSpeedDragEnd = (): void => {
     draggingSpeed = false;
+  };
+  const onTilesDragStart = (): void => {
+    draggingTiles = true;
+  };
+  const onTilesDragEnd = (): void => {
+    draggingTiles = false;
   };
 
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -227,6 +316,11 @@ export function mountDebugPanel(
     [speedSlider, 'pointerup', onSpeedDragEnd],
     [speedSlider, 'blur', onSpeedDragEnd],
     [speedReset, 'click', onSpeedReset],
+    [tilesSlider, 'input', onTiles],
+    [tilesSlider, 'pointerdown', onTilesDragStart],
+    [tilesSlider, 'pointerup', onTilesDragEnd],
+    [tilesSlider, 'blur', onTilesDragEnd],
+    [anchorLabelsToggle, 'click', onAnchorLabels],
     [hide, 'click', onHide],
     [chip, 'click', onShow],
   ];
@@ -240,6 +334,7 @@ export function mountDebugPanel(
   return () => {
     unsubscribe();
     unsubscribeSpeed();
+    unsubscribeTiles();
 
     for (const [target, type, listener] of bindings) {
       target.removeEventListener(type, listener);

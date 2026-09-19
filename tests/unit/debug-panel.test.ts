@@ -5,7 +5,12 @@ import {
   SPEED_SLIDER_STEPS,
 } from '../../src/debug/animation-speed';
 import { mountDebugPanel, type DebugPanelOptions } from '../../src/debug/debug-panel';
+import {
+  createTileGridController,
+  type TileGridTarget,
+} from '../../src/debug/tile-grid-control';
 import type { DebugState, TransitionDebugger } from '../../src/debug/transition-debugger';
+import { DEFAULT_TILE_COUNT, gridShapeFor, MAX_TILE_COUNT } from '../../src/tile-grid';
 import { defaultMotionProfile } from '../../src/transition/motion-profile';
 import type { MotionProfile } from '../../src/transition/types';
 
@@ -36,6 +41,26 @@ function createStubDebugger(): TransitionDebugger & { emit(state: DebugState): v
         listener(state);
       }
     },
+  };
+}
+
+/**
+ * A tile grid with a fixed width available to it, so the panel can be driven
+ * without building the Spectrum DOM. Lays out through the real shape function,
+ * so the readout the panel prints is the shape the page would have produced.
+ */
+function createStubGrid(availableWidthPx = 1152): TileGridTarget & { renders: number } {
+  let count = DEFAULT_TILE_COUNT;
+
+  return {
+    renders: 0,
+    tileCount: () => count,
+    setTileCount(next) {
+      count = next;
+      this.renders += 1;
+      return gridShapeFor(count, availableWidthPx);
+    },
+    refreshLayout: () => gridShapeFor(count, availableWidthPx),
   };
 }
 
@@ -186,6 +211,114 @@ describe('debug panel speed control availability', () => {
     expect(panel.dataset.active).toBe('false');
     controller.emit(RUNNING);
     expect(panel.dataset.active).toBe('true');
+  });
+});
+
+describe('debug panel tile count control', () => {
+  function setupTiles(availableWidthPx?: number) {
+    const grid = createStubGrid(availableWidthPx);
+    const anchors = { on: true };
+    const panel = setup(
+      {},
+      {
+        tiles: createTileGridController(grid),
+        anchorLabels: {
+          visible: () => anchors.on,
+          setVisible: (visible) => {
+            anchors.on = visible;
+          },
+        },
+      },
+    );
+
+    return {
+      ...panel,
+      grid,
+      anchors,
+      tiles: document.querySelector<HTMLInputElement>('[data-debug-tiles]')!,
+      tilesReadout: document.querySelector<HTMLElement>('[data-debug-tiles-readout]')!,
+      anchorToggle: document.querySelector<HTMLButtonElement>('[data-debug-anchor-labels]')!,
+    };
+  }
+
+  it('renders a 1-to-16 slider seeded from the grid as it already stands', () => {
+    const { tiles, tilesReadout } = setupTiles();
+
+    expect(tiles.min).toBe('1');
+    expect(tiles.max).toBe(String(MAX_TILE_COUNT));
+    expect(tiles.value).toBe(String(DEFAULT_TILE_COUNT));
+    expect(tilesReadout.textContent).toBe('3 tiles · 1 × 3');
+  });
+
+  it('reports the shape that laid out, not the shape that was asked for', () => {
+    const { tiles, tilesReadout } = setupTiles();
+
+    drag(tiles, 16);
+    expect(tilesReadout.textContent).toBe('16 tiles · 4 × 4');
+
+    drag(tiles, 10);
+    expect(tilesReadout.textContent).toBe('10 tiles · 2 × 5');
+
+    drag(tiles, 1);
+    expect(tilesReadout.textContent).toBe('1 tile · 1 × 1');
+  });
+
+  it('folds the requested shape down on a narrow grid', () => {
+    const { tiles, tilesReadout } = setupTiles(360);
+
+    drag(tiles, 16);
+    expect(tilesReadout.textContent).toBe('16 tiles · 16 × 1');
+  });
+
+  it('never re-renders the grid for a value it is already showing', () => {
+    const { tiles, grid } = setupTiles();
+
+    drag(tiles, DEFAULT_TILE_COUNT);
+    expect(grid.renders).toBe(0);
+
+    drag(tiles, 9);
+    expect(grid.renders).toBe(1);
+  });
+
+  it('is disabled while a turn is in flight, since changing it re-renders the grid', () => {
+    const { controller, tiles } = setupTiles();
+
+    expect(tiles.disabled).toBe(false);
+    controller.emit(RUNNING);
+    expect(tiles.disabled).toBe(true);
+    controller.emit(IDLE);
+    expect(tiles.disabled).toBe(false);
+  });
+
+  it('toggles the anchor labels and reports their state', () => {
+    const { anchorToggle, anchors } = setupTiles();
+
+    expect(anchorToggle.getAttribute('aria-pressed')).toBe('true');
+
+    anchorToggle.click();
+    expect(anchors.on).toBe(false);
+    expect(anchorToggle.getAttribute('aria-pressed')).toBe('false');
+
+    anchorToggle.click();
+    expect(anchors.on).toBe(true);
+    expect(anchorToggle.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('omits the whole section when no grid is supplied', () => {
+    setup();
+
+    expect(document.querySelector('[data-debug-tiles]')).toBeNull();
+    expect(document.querySelector('[data-debug-anchor-labels]')).toBeNull();
+  });
+
+  it('stops driving the grid once torn down', () => {
+    const { tiles, grid, teardown } = setupTiles();
+
+    teardown();
+    drag(tiles, 16);
+
+    expect(grid.renders).toBe(0);
+    expect(grid.tileCount()).toBe(DEFAULT_TILE_COUNT);
   });
 });
 

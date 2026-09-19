@@ -25,8 +25,45 @@ Query parameters for inspecting the motion:
 | Parameter | Effect |
 | --- | --- |
 | `?duration=1200` | Override full-motion duration in milliseconds. |
+| `?tiles=16` | Open with this many tiles in the grid, 1 to 16. |
 | `?fallback=1` | Force the reduced-motion opacity/scale path. |
 | `?debug=0` | Hide the debug panel, leaving a small chip to bring it back. |
+
+## Seeing all eight grab anchors
+
+Which corner or edge the sheet is grabbed by is not authored — it is resolved from
+where the tile sits in the grid at the moment it is clicked. So the way to see the
+whole behaviour is to change the grid, and the panel's **Tiles** slider does that
+from 1 to 16.
+
+The column count comes from the tile count, as the balanced factor pair, then is
+capped by how many columns the window can actually hold:
+
+| Tiles | Shape | Tiles | Shape |
+| --- | --- | --- | --- |
+| 1 | 1 × 1 | 9 | 3 × 3 |
+| 2 | 1 × 2 | 10 | 2 × 5 |
+| 3 | 1 × 3 | 12 | 3 × 4 |
+| 4 | 2 × 2 | 15 | 3 × 5 |
+| 6 | 2 × 3 | 16 | 4 × 4 |
+
+**3 × 3 is the one shape that reaches all eight anchors at once**, because it is
+the smallest grid with a middle row and a true centre column. 4 × 4 reaches the
+six a grid with no centre column can. A single row or column exercises the
+degenerate rules, and a narrow window folds any requested shape down — 16 tiles on
+a phone is a legitimate 16 × 1 — so the readout always states the shape that laid
+out rather than the one that was asked for.
+
+**Anchors** draws each tile's resolved anchor over it, read from the same resolver
+the activation path calls, so the labels cannot claim one thing while the turn does
+another. Resize the window with them on and watch them change as the columns
+reflow. The labels are debug chrome: they sit outside the tile's trigger, so they
+are absent from both the captured texture and the visual baselines.
+
+The demo opens with three tiles, which is the layout every browser and visual test
+measures. `tests/unit/tile-grid.test.ts` pins that default to the three shapes
+those suites expect at their own viewport widths, so changing the layout rule fails
+a named test rather than six screenshots.
 
 The debug panel is **on by default** — this demo is published so the turn can be
 inspected, so the controls are the point rather than a hidden extra. Only

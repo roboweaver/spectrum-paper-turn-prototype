@@ -14,39 +14,20 @@ import { createTransitionDebugger } from './debug/transition-debugger';
 import { createAnimationSpeedController } from './debug/animation-speed';
 import { isDebugPanelVisible, syncDebugParam } from './debug/debug-visibility';
 import { mountDebugPanel } from './debug/debug-panel';
+import { createTileGridController, type TileGridController } from './debug/tile-grid-control';
+import { tileCountFromParams } from './tile-grid';
 import { TransitionCoordinator } from './transition/transition-coordinator';
 import { resolveGrabAnchor } from './transition/grab-anchor';
-import type { MotionProfile, Rect } from './transition/types';
+import type { MotionProfile } from './transition/types';
 
 declare global {
   interface Window {
     __paperTurn?: {
       coordinator: TransitionCoordinator;
       profile: MotionProfile;
+      tiles: TileGridController;
     };
   }
-}
-
-/**
- * Measure every tile in the grid, in document order, so the activated tile's
- * grid position can be recovered from the layout the user can actually see.
- *
- * Each `[data-card-trigger]` element's bounding rect is read exactly once, which
- * makes this a single layout pass costing `O(tiles)`. It runs on activation, not
- * per frame, and the returned `triggers` list shares the index space of `rects`,
- * so `triggers.indexOf(trigger)` locates the activated tile.
- *
- * The anchor is derived from position alone: no element attribute, constant, or
- * runtime parameter can override it.
- */
-function measureTiles(root: HTMLElement): { triggers: HTMLElement[]; rects: Rect[] } {
-  const triggers = Array.from(root.querySelectorAll<HTMLElement>('[data-card-trigger]'));
-  const rects = triggers.map((trigger) => {
-    const { left, top, width, height } = trigger.getBoundingClientRect();
-    return { left, top, width, height };
-  });
-
-  return { triggers, rects };
 }
 
 function createMotionProfile(searchParams: URLSearchParams): MotionProfile {
@@ -77,7 +58,8 @@ const profile = createMotionProfile(searchParams);
 // the panel can be re-shown at any moment from the chip, and a driver that had
 // to be swapped in first could not pause or scrub a turn already under way.
 const transitionDebugger = createTransitionDebugger();
-const app = createDemoApp(root);
+const app = createDemoApp(root, tileCountFromParams(searchParams));
+const tiles = createTileGridController(app);
 const transitionView = new DomTransitionView({
   list: app.listSurface,
   detail: app.detailSurface,
@@ -96,10 +78,16 @@ const coordinator = new TransitionCoordinator(transitionView, {
 
 // The speed controller seeds its slider from `?duration=` but does not write
 // back to the profile, so making the panel default-on does not change what
-// `?duration=` means for anyone who is not touching the slider.
+// `?duration=` means for anyone who is not touching the slider. The tile control
+// is the same shape: `?tiles=` seeds it and is never rewritten.
 mountDebugPanel(transitionDebugger, createAnimationSpeedController(profile), document.body, {
   visible: isDebugPanelVisible(searchParams),
   onVisibilityChange: (visible) => syncDebugParam(visible),
+  tiles,
+  anchorLabels: {
+    visible: () => app.anchorLabelsVisible(),
+    setVisible: (visible) => app.setAnchorLabelsVisible(visible),
+  },
 });
 
 root.dataset.transitionState = coordinator.state;
@@ -107,32 +95,42 @@ coordinator.addEventListener('statechange', () => {
   root.dataset.transitionState = coordinator.state;
 });
 
-window.__paperTurn = { coordinator, profile };
+window.__paperTurn = { coordinator, profile, tiles };
 
-for (const trigger of root.querySelectorAll<HTMLElement>('[data-card-trigger]')) {
-  trigger.addEventListener('click', () => {
-    const sourceId = trigger.dataset.sourceId;
-    if (!sourceId) {
-      reportCoordinatorFailure('open', new Error('Demo DOM contract is incomplete: card trigger missing data-source-id'));
-      return;
-    }
+// Delegated rather than bound per tile: the tile count control re-renders the
+// grid, so a listener attached to a trigger would be discarded with it.
+app.cardGrid.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement | null;
+  const trigger = target?.closest<HTMLElement>('[data-card-trigger]') ?? null;
 
-    // Measurement and resolution both complete synchronously here, before the
-    // coordinator schedules the first animation frame, so no layout read is
-    // attributable to the frame loop and none happens again while the turn runs.
-    const { triggers, rects } = measureTiles(root);
-    const grabAnchor = resolveGrabAnchor(rects, triggers.indexOf(trigger));
+  if (!trigger || !app.cardGrid.contains(trigger)) {
+    return;
+  }
 
-    runCoordinatorAction(
-      'open',
-      coordinator.open({
-        sourceId,
-        grabAnchor,
-        trigger,
-      }),
-    );
-  });
-}
+  const sourceId = trigger.dataset.sourceId;
+  if (!sourceId) {
+    reportCoordinatorFailure('open', new Error('Demo DOM contract is incomplete: card trigger missing data-source-id'));
+    return;
+  }
+
+  // Measurement and resolution both complete synchronously here, before the
+  // coordinator schedules the first animation frame, so no layout read is
+  // attributable to the frame loop and none happens again while the turn runs.
+  //
+  // The anchor is derived from position alone: no element attribute, constant, or
+  // runtime parameter can override it.
+  const { triggers, rects } = app.measureTiles();
+  const grabAnchor = resolveGrabAnchor(rects, triggers.indexOf(trigger));
+
+  runCoordinatorAction(
+    'open',
+    coordinator.open({
+      sourceId,
+      grabAnchor,
+      trigger,
+    }),
+  );
+});
 
 app.closeButton.addEventListener('click', () => {
   runCoordinatorAction('close', coordinator.close());
@@ -146,8 +144,13 @@ window.addEventListener('keydown', (event) => {
 
 window.addEventListener('resize', () => {
   coordinator.handleViewportChange();
+  // Column count is capped by the width available, so a resize can change the
+  // grid shape and with it every tile's anchor. Re-laying out never replaces a
+  // tile element, so this is safe while a turn is settling.
+  tiles.refresh();
 });
 
 window.addEventListener('orientationchange', () => {
   coordinator.handleViewportChange();
+  tiles.refresh();
 });

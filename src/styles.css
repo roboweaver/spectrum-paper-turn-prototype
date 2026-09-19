@@ -49,16 +49,27 @@ button { font: inherit; }
   text-transform: uppercase;
 }
 
+/*
+ * The column count is written by `app.ts` from the tile count and the width
+ * available, rather than left to `auto-fit`, so a requested shape — 2 x 5, 4 x 4 —
+ * is the shape that lays out instead of whatever track sizing happens to pick.
+ * See `src/tile-grid.ts`; `--grid-gap` must stay in step with `TILE_GAP_PX`.
+ */
 .card-grid {
+  --grid-columns: 3;
+  --grid-gap: 24px;
   margin: 0;
   padding: 0;
   list-style: none;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-  gap: 24px;
+  grid-template-columns: repeat(var(--grid-columns), minmax(0, 1fr));
+  gap: var(--grid-gap);
 }
 
-.card-grid-item { min-width: 0; }
+.card-grid-item {
+  position: relative;
+  min-width: 0;
+}
 
 .card-trigger {
   display: block;
@@ -73,15 +84,54 @@ button { font: inherit; }
 
 .card-trigger:focus-visible { outline: 3px solid #1473e6; outline-offset: 5px; }
 
-sp-card { width: 100%; min-height: 330px; }
+/*
+ * Tiles shorten as columns are added, so a 4 x 4 stays on screen without
+ * scrolling. Three or fewer columns resolve to the original 330px/190px exactly,
+ * which is what keeps the default layout pixel-identical.
+ */
+sp-card {
+  width: 100%;
+  min-height: clamp(180px, calc(990px / var(--grid-columns, 3)), 330px);
+}
 
 .card-preview {
   width: 100%;
-  min-height: 190px;
+  min-height: clamp(90px, calc(570px / var(--grid-columns, 3)), 190px);
   background:
     radial-gradient(circle at 75% 20%, rgb(255 255 255 / 55%), transparent 28%),
     linear-gradient(145deg, color-mix(in srgb, var(--card-color), white 20%), var(--card-color));
 }
+
+/*
+ * The anchor each tile would be grabbed by, drawn over the tile.
+ *
+ * This is the demo's whole point made visible: the anchor is resolved from grid
+ * position, so moving a tile — by changing the tile count or the window width —
+ * changes the label. It is debug chrome, so it is suppressed in visual baselines
+ * (see tests/e2e/screenshot.css) and it is `pointer-events: none` so it can never
+ * swallow an activation. `position: absolute` keeps it out of grid flow, so
+ * turning it off changes no tile geometry.
+ */
+.tile-anchor-label {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 8px;
+  inset-inline-start: 8px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgb(20 20 22 / 78%);
+  color: #f4f4f5;
+  font: 600 10px/1.4 system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+[data-anchor-labels='false'] .tile-anchor-label { display: none; }
+
+/* The sheet is mid-flight and the card beneath it is hidden, so its label has to
+   go too — otherwise a chip floats over a gap where the tile used to be. */
+.card-grid-item:has([data-transition-hidden='true']) .tile-anchor-label { visibility: hidden; }
 
 .detail-surface {
   position: fixed;
@@ -179,12 +229,14 @@ sp-card { width: 100%; min-height: 330px; }
     padding: 20px;
   }
 
-  .card-grid {
-    grid-template-columns: 1fr;
-  }
-
+  /*
+   * No `grid-template-columns` override here any more. The column count is
+   * capped by the width available, so a narrow viewport already folds down to a
+   * single column for the original tile size — and forcing one column would
+   * override a narrower shape that was asked for deliberately.
+   */
   sp-card {
-    min-height: 280px;
+    min-height: clamp(160px, calc(840px / var(--grid-columns, 1)), 280px);
   }
 }
 
@@ -192,7 +244,7 @@ sp-card { width: 100%; min-height: 330px; }
   .detail-surface { will-change: opacity; }
 }
 
-/* Debug control strip. Only mounted when the demo is loaded with ?debug=1. */
+/* Debug control strip. Mounted on every load; hidden with ?debug=0. */
 .paper-turn-debug {
   position: fixed;
   z-index: 40;
@@ -224,6 +276,12 @@ sp-card { width: 100%; min-height: 330px; }
 .paper-turn-debug button:focus-visible { outline: 2px solid #7c8cff; outline-offset: 2px; }
 .paper-turn-debug input[type='range'] { width: min(420px, 40vw); accent-color: #7c8cff; }
 .paper-turn-debug input[type='range'][data-debug-speed] { width: min(200px, 18vw); }
+.paper-turn-debug input[type='range'][data-debug-tiles] { width: min(160px, 14vw); }
+
+.paper-turn-debug button[data-debug-anchor-labels][data-on='true'] {
+  border-color: rgb(124 140 255 / 70%);
+  background: rgb(124 140 255 / 30%);
+}
 
 .paper-turn-debug__label {
   opacity: 0.7;
@@ -238,6 +296,7 @@ sp-card { width: 100%; min-height: 330px; }
 }
 
 .paper-turn-debug__readout--speed { min-width: 96px; }
+.paper-turn-debug__readout--tiles { min-width: 130px; }
 
 /* Only the scrub track is meaningless while idle; speed stays available. */
 .paper-turn-debug[data-active='false'] input[type='range'][data-debug-scrub] { opacity: 0.4; }
