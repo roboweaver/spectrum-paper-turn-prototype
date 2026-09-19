@@ -94,7 +94,20 @@ export function createDemoApp(
       <main class="demo-shell">
         <section class="list-surface" data-list-surface aria-busy="false">
           <header class="hero">
-            <p class="eyebrow">Spectrum Web Components prototype</p>
+            <!-- The links share the eyebrow's line rather than taking one of
+                 their own, which is what keeps them off the page's height. The
+                 hero sits above the grid in every visual baseline, and the
+                 midline baseline runs at 400 x 1200 with only ~60px of slack
+                 before a fullPage capture would start scrolling the page and fire
+                 the resize the coordinator treats as an interruption. See
+                 tests/e2e/visual.spec.ts. -->
+            <div class="hero-meta">
+              <p class="eyebrow">Spectrum Web Components prototype</p>
+              <nav class="hero-links" aria-label="Project links">
+                <a href="https://github.com/roboweaver/spectrum-paper-turn-prototype">Source on GitHub</a>
+                <a href="https://accuweaver.com">AccuWeaver</a>
+              </nav>
+            </div>
             <h1>Paper-turn navigation</h1>
             <!-- Deliberately unchanged copy. The hero sits above the grid in
                  every visual baseline, so a sentence added here reflows the whole

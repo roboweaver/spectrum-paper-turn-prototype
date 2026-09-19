@@ -50,6 +50,64 @@ button { font: inherit; }
 }
 
 /*
+ * The hero's meta line: the eyebrow on the left, the outbound links on the
+ * right, sharing one row.
+ *
+ * Sharing the eyebrow's row rather than taking a row below it is the point. The
+ * hero is above the grid in every visual baseline, and the midline baseline runs
+ * at 400 x 1200 where the page already measures ~1141px — a fullPage capture of
+ * a page taller than its viewport scrolls, which fires the `resize` the
+ * coordinator settles through the fallback on, so the screenshot would catch a
+ * settled page instead of a fold. At the 1280px baseline width the links fit
+ * beside the eyebrow and the page height is unchanged; below roughly 480px they
+ * wrap to their own line, which the remaining slack absorbs.
+ *
+ * `align-items: baseline` sits the two on a common text baseline despite their
+ * different font sizes. `.hero-links` repeats the eyebrow's bottom margin so a
+ * wrapped line keeps the same rhythm as the unwrapped row.
+ */
+.hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 24px;
+}
+
+.hero-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  margin: 0 0 12px;
+}
+
+/*
+ * `border-bottom` rather than `text-decoration`, so the rule sits clear of the
+ * descenders at this size, and `opacity` rather than a colour swap, so the hover
+ * state needs no second colour token. The links are quieter than the eyebrow
+ * beside them: they are an exit from the demo, not part of it.
+ */
+.hero-links a {
+  border-bottom: 1px solid currentcolor;
+  color: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.hero-links a:hover { opacity: 1; }
+
+.hero-links a:focus-visible {
+  opacity: 1;
+  outline: 3px solid #1473e6;
+  outline-offset: 4px;
+}
+
+/*
  * The column count is written by `app.ts` from the tile count and the width
  * available, rather than left to `auto-fit`, so a requested shape — 2 x 5, 4 x 4 —
  * is the shape that lays out instead of whatever track sizing happens to pick.
@@ -289,6 +347,8 @@ sp-card {
   /* The affordance stays — it is what tells you the tile is clickable — but it
      arrives instantly instead of easing in. */
   .card-trigger sp-card { transition: none; }
+
+  .hero-links a { transition: none; }
 }
 
 /* Debug control strip. Mounted on every load; hidden with ?debug=0. */
