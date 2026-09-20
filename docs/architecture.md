@@ -14,9 +14,12 @@ the few hundred milliseconds a card is turning into a page.
 
 ```
 main.ts
+  ├── content-resolver ───── tile url → an adoptable fragment  (the network lives here)
+  │     ├── fragment ─────── page html → fragment, or a named contract failure
+  │     └── capture-readiness  fonts + image decode, bounded
   ├── grab-anchor ────────── measured tile rects → the grab anchor
   ├── tile-grid ─────────── tile count → grid shape
-  └── app.ts ─────────────── builds the Spectrum list + detail DOM
+  └── app.ts ─────────────── builds the Spectrum list + detail shell, adopts fragments
         └── TransitionCoordinator ── owns the lifecycle and all cleanup
               ├── DomTransitionView ─ every DOM mutation the transition makes
               ├── capabilities ────── decides full motion vs. fallback
@@ -42,9 +45,115 @@ main.ts
 | `capabilities.ts` | Reduced-motion preference and WebGL/texture prerequisites. |
 | `timeline.ts` | One `requestAnimationFrame` loop producing normalized progress. |
 | `motion-profile.ts` | Durations, easing, bend depth, fold softness, mesh density, texture caps. |
+| `content/fragment.ts` | Pure functions. Page HTML in, an adoptable `DocumentFragment` or a named contract failure out. No network, no live-document mutation, never throws. |
+| `content/content-resolver.ts` | The only module that touches the network. Owns the fetch, the same-origin check, single-flight, and supersession. Reads no geometry and calls no coordinator method. |
+| `content/capture-readiness.ts` | Awaits fonts and image decoding for adopted content, bounded. Total: a failed decode or an elapsed bound reports and continues. |
+| `content/resolver-config.ts` | Resolution's tunables, kept deliberately out of `MotionProfile`. |
 
 Dependencies are deliberately few: `three` for the mesh, `html-to-image` for the
-texture, and Spectrum Web Components for the UI. Nothing else.
+texture, and Spectrum Web Components for the UI. Nothing else — content resolution
+added no package, using `fetch` and `DOMParser`.
+
+## Where the detail content comes from
+
+The detail surface used to be a five-field skeleton filled from a frozen
+`CardRecord[]` with `textContent`. It is now whatever a fetched same-origin page
+says it is. [`docs/fragment-contract.md`](./fragment-contract.md) is the authoring
+contract; this section is the shape of the change.
+
+### The network wait lives outside the state machine
+
+```
+click ─▶ guard modified clicks ─▶ preventDefault
+           │
+           ▼
+         resolver.resolve(url) ──────────── async, supersedable
+           │
+           ├─ failed     ─▶ ordinary navigation to the href
+           ├─ superseded ─▶ do nothing at all
+           │
+           ▼  resolved
+         setPendingDetail ─▶ renderDetail (adopt) ─▶ await capture readiness
+           │
+           ▼
+         measure tiles ─▶ resolveGrabAnchor ─▶ coordinator.open()
+```
+
+The ordering is the load-bearing decision. Awaiting inside `open()` looked like a
+two-line change — it is already `async`, and the `catch` around `prepareDetail`
+already recovers — but it would have put an unbounded network wait *inside* the
+coordinator, between `freezeScroll()` and the first frame. `preparing` would stop
+being transient bookkeeping and become a long-lived, user-visible state needing its
+own cancellation semantics for Escape, re-activation, and resize, in the most
+intricate and most heavily tested module here. It would also freeze scroll with
+nothing on screen to explain why, and break the measured-before-committed invariant,
+since measurement happens before `open()` and a round trip after it can leave the
+rects stale.
+
+Resolving ahead of the coordinator leaves `TransitionCoordinator`,
+`DomTransitionView`, the geometry, the renderer, the timeline, and the fallback
+untouched, along with their tests. Cancelling becomes "do not call `open()`".
+
+The cost is one new guard. The coordinator refuses `open()` unless its state is
+`idle`, but during a pending fetch the state *is* `idle`, so a second click would
+slip past it. The resolver owns single-flight and supersession instead.
+
+### Supersession discards failures too
+
+A superseded activation's outcome is owed to nobody — success *and* failure. Treating
+a superseded failure as a failure would fall through to navigation on behalf of a
+click the reader already abandoned, taking the page out from under the activation
+they are watching. The resolver returns a three-way outcome rather than an `ok`
+boolean so that a caller cannot conflate the two by accident.
+
+### Adoption happens twice, and must only count once
+
+Nothing in a parsed fragment loads until it is in the live document, and both
+adoption and the capture happen inside `open()`. So the activation path adopts
+first — that is what lets image decoding be awaited before rasterisation — and
+`prepareDetail` then calls `renderDetail` again. It is idempotent per activation for
+exactly that reason: re-adopting would replace the nodes with fresh ones and restart
+the loading the readiness wait had just paid for.
+
+### `.detail-content` is the region, not its container
+
+The fragment's top-level nodes become direct children of `.detail-content`. That is
+not incidental: it is a column flex container and `.detail-footer` pins itself to the
+bottom with `margin: auto 0 0`, which only works while the footer is a direct child.
+An extra wrapper element would break the pin and move the settled visual baseline
+with no error anywhere. It must also stay inside `<sp-theme>`, or `themeTokenCss`
+stops finding a theme ancestor by `closest()` and the capture loses its tokens — see
+[The clone is detached from `<sp-theme>`](#the-clone-is-detached-from-sp-theme).
+
+### Tiles are anchors
+
+`createCardItem` builds an `<a href>` rather than a `<button>`. That gives the
+fall-through a real destination, makes cmd-click, middle-click and open-in-new-tab
+work natively, and gives assistive technology correct link semantics. The delegated
+handler returns before `preventDefault()` for any modified or non-primary click.
+
+Two caveats. The UA link underline needed removing explicitly — `color: inherit` was
+already there but `text-decoration` is separate, and it inherits into `sp-card`'s
+slotted text, so omitting it underlines every tile. And the often-claimed
+"works without JavaScript" benefit does **not** apply here: `index.html` is an empty
+`<div id="app">` and `createDemoApp` builds the whole grid at runtime, so blocking
+the module leaves no tiles at all. That benefit belongs to a server-rendered host.
+
+### The demo generates its own pages
+
+`scripts/generate-detail-pages.ts` emits one page per `CardRecord` into
+`public/detail/`, on the `predev` and `prebuild` hooks. Generated rather than
+hand-authored for one reason: five of the six committed visual frames carry
+*captured detail content* — only `paper-turn-start` is grid-only — so the emitted
+markup has to reproduce what `renderDetail` produced before this change, or ten
+reference images across two platforms move. Emitting from the same records the tiles
+are built from is what guarantees it, and
+`tests/unit/detail-content.golden.json` holds the pre-change structures the
+generator is checked against.
+
+The output is gitignored build output. The hand-authored contract fixtures under
+`public/fixtures/` are committed source, in a sibling directory so the generator's
+wipe cannot reach them, and are referenced by no visual spec.
 
 ## Resolving the grab anchor
 

@@ -344,8 +344,8 @@ it.
 - [x] 11. Checkpoint - the feature works end to end
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 12. Document the contract and the posture
-  - [ ] 12.1 Write the fragment contract documentation
+- [x] 12. Document the contract and the posture
+  - [x] 12.1 Write the fragment contract documentation
     - Document the required `[data-paper-turn-detail]` `<template>` and the required
       `[data-detail-heading]`, the optional `data-paper-turn-color` and `<title>`, and a
       minimal working example
@@ -356,7 +356,7 @@ it.
       adopted and should fall through to normal navigation
     - _Requirements: 3.8, 8.5_
 
-  - [ ] 12.2 Record the security posture where an operator will find it
+  - [x] 12.2 Record the security posture where an operator will find it
     - State that fragments are adopted unchanged and that nothing is sanitised
     - State the assumption that licenses it: the detail page's content must be no less
       trusted than the page adopting it, and the layer producing the page is the security
@@ -369,7 +369,7 @@ it.
       of scope for Phase 1
     - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
-  - [ ] 12.3 Update `docs/architecture.md` and `README.md`
+  - [x] 12.3 Update `docs/architecture.md` and `README.md`
     - Record the activation path's new shape: resolve, measure, ready, open — and why the
       network wait lives outside the state machine
     - Record that the detail surface is now an adopted region rather than five named
@@ -382,8 +382,8 @@ it.
       their existing seed-only semantics
     - _Requirements: 9.6, 11.6, 11.7_
 
-- [ ] 13. Verify the Phase 1 boundary holds
-  - [ ] 13.1 Assert the deferred work is absent
+- [x] 13. Verify the Phase 1 boundary holds
+  - [x] 13.1 Assert the deferred work is absent
     - Grep the source tree to confirm no `pushState`, no `replaceState`, and no `popstate`
       listener; no `pointerenter`, `focusin`, or `touchstart` prefetch; no cross-activation
       fragment cache; no latency-budget fallback commit; no pending affordance; no
@@ -400,7 +400,7 @@ it.
       second capture
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 10.5, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 13.8_
 
-  - [ ] 13.2 Run the full suite and confirm the baselines did not move
+  - [x] 13.2 Run the full suite and confirm the baselines did not move
     - `npm run test:unit`, `npm run test:e2e`, and `npm run test:visual`
     - Confirm the geometry, renderer, coordinator, and grab-anchor suites pass
       **unmodified**, the only permitted edits across the existing suites being those
@@ -415,7 +415,7 @@ it.
       runner
     - _Requirements: 9.7, 12.1, 12.2, 12.3, 12.4, 12.5_
 
-  - [ ] 13.3 Run the build and lint gates
+  - [x] 13.3 Run the build and lint gates
     - `npm run lint`, `npm run typecheck`, and `npm run build`
     - Confirm the generator ran from `prebuild` and that `dist/detail/` holds sixteen
       pages

@@ -95,6 +95,19 @@ npm install
 npm run dev
 ```
 
+`predev` and `prebuild` run `scripts/generate-detail-pages.ts`, which emits one
+detail page per record into `public/detail/`. Those are the pages the tiles fetch,
+so the transition has real same-origin URLs rather than a compile-time constant. They
+are gitignored build output — the records in `src/data/cards.ts` are what gets
+reviewed — and they are regenerated on every `dev` and `build`, including for the
+Playwright suites, whose web server is `npm run dev`. Nothing in CI needed changing
+for that; the lifecycle hooks cover it.
+
+The tiles are real `<a href>` links, so a failed or non-conforming fetch falls
+through to an ordinary navigation and the destination still works. See
+[the fragment contract](docs/fragment-contract.md) for what a page must provide, and
+for the deliberate decision to adopt page content unchanged.
+
 The debug panel is **on by default** — this demo is published so the turn can be
 inspected, so the controls are the point rather than a hidden extra. Only
 `debug=0`, `false`, `off`, or `no` (any case) hide it. Every other value,
@@ -185,6 +198,9 @@ git push origin HEAD:update-visual-baselines/my-change
   DOM + WebGL approach was chosen.
 - [Architecture](docs/architecture.md) — how it is built, the geometry model,
   and the non-obvious constraints that shaped it.
+- [The fragment contract](docs/fragment-contract.md) — how a page makes itself
+  turnable, what happens when it does not, and the security posture behind
+  adopting page content unchanged.
 - [Implementation plan](docs/superpowers/plans/2026-08-27-spectrum-paper-turn.md) —
   the task-by-task plan the prototype was built from.
 
