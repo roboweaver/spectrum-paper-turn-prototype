@@ -6,7 +6,12 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
     "moduleResolution": "Bundler",
-    "allowImportingTsExtensions": false,
+    // `scripts/generate-detail-pages.ts` runs under Node's native type
+    // stripping, which resolves relative specifiers by ESM rules and therefore
+    // requires the explicit `.ts` extension. Permitted here rather than adding a
+    // transpiler dependency; safe because the project is `noEmit` and Vite owns
+    // the build. Application code under `src/` stays extensionless.
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
@@ -15,5 +20,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vitest/globals", "node"]
   },
-  "include": ["src", "tests", "*.config.ts"]
+  "include": ["src", "tests", "scripts", "*.config.ts"]
 }

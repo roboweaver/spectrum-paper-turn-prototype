@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Marked region is a div</title>
+  </head>
+  <body>
+    <!--
+      The region is marked but is a <div>, not a <template>.
+
+      The contract requires a template for a reason worth restating: a div would
+      be displayed by the standalone page *and* adopted, so the author would have
+      to choose between a page that renders and a page that turns. Failing loudly
+      here is what keeps that from becoming a silent double-render.
+    -->
+    <div data-paper-turn-detail data-paper-turn-color="#0d66d0">
+      <p class="eyebrow">Fixture</p>
+      <h2 data-detail-heading tabindex="-1">Marked, but not a template</h2>
+      <p>Extraction must report region-not-template.</p>
+    </div>
+  </body>
+</html>

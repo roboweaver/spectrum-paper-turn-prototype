@@ -30,8 +30,8 @@ it.
 
 ## Tasks
 
-- [ ] 1. Give every record a URL and generate the pages behind them
-  - [ ] 1.1 Add `url` to `CardRecord` and populate all sixteen records
+- [x] 1. Give every record a URL and generate the pages behind them
+  - [x] 1.1 Add `url` to `CardRecord` and populate all sixteen records
     - Add `url: string` to the `CardRecord` interface in `src/data/cards.ts`, documented
       as same-origin and resolved against the document base URL
     - Populate all sixteen records with a path under the generated detail directory,
@@ -44,7 +44,7 @@ it.
     - Additive only, so the project keeps compiling before the generator exists
     - _Requirements: 6.1, 6.2, 6.3, 6.5_
 
-  - [ ] 1.2 Write `scripts/generate-detail-pages.ts`
+  - [x] 1.2 Write `scripts/generate-detail-pages.ts`
     - Emit one HTML file per record into `public/detail/<id>.html`, importing `cards`
       directly so the records stay the single source of truth and the pages cannot drift
     - Inside each page emit `<template data-paper-turn-detail data-paper-turn-color="…">`
@@ -62,7 +62,7 @@ it.
     - Deterministic: the same records produce byte-identical output on every run
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 12.2_
 
-  - [ ] 1.3 Wire the generator into the lifecycle and ignore its output
+  - [x] 1.3 Wire the generator into the lifecycle and ignore its output
     - Add `predev` and `prebuild` scripts to `package.json` invoking the generator.
       Both are required: `prebuild` covers `npm run build` in `ci.yml` and
       `deploy-pages.yml`, and `predev` covers the dev server *and* Playwright, whose
@@ -74,7 +74,7 @@ it.
     - Do not edit any workflow file: the hooks are what make that unnecessary
     - _Requirements: 11.6, 11.7_
 
-  - [ ] 1.4 Add the deliberately awkward contract fixtures
+  - [x] 1.4 Add the deliberately awkward contract fixtures
     - Add a small number of fixtures under `public/detail/` (or a sibling fixture
       directory) whose markup is unlike the generated skeleton: nested structure, an
       `<img>`, arbitrary heading depth, and an element carrying an inline event-handler
@@ -86,7 +86,7 @@ it.
       them** — that is what keeps realism from costing baselines
     - _Requirements: 11.8_
 
-  - [ ] 1.5 Unit-test the generator in `tests/unit/detail-page-generator.test.ts`
+  - [x] 1.5 Unit-test the generator in `tests/unit/detail-page-generator.test.ts`
     - Assert one page per record, each satisfying the fragment contract: a `<template>`
       marked `[data-paper-turn-detail]` containing exactly one `[data-detail-heading]`
     - Assert the emitted template's structure matches the structure `renderDetail`
@@ -96,8 +96,8 @@ it.
       byte-identical across two runs
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 12.2_
 
-- [ ] 2. Build the fragment extractor
-  - [ ] 2.1 Create `src/content/fragment.ts`
+- [x] 2. Build the fragment extractor
+  - [x] 2.1 Create `src/content/fragment.ts`
     - Export `extractFragment(html: string): FragmentResult`, a discriminated union of a
       success carrying the `DocumentFragment` plus the optional colour and document title,
       and a failure carrying which contract obligation was unmet
@@ -113,7 +113,7 @@ it.
     - Pure: no network access, no live-document mutation, equal output for equal input
     - _Requirements: 3.1, 3.2, 3.3, 3.5, 3.6, 3.7_
 
-  - [ ] 2.2 Unit-test extraction in `tests/unit/fragment.test.ts`
+  - [x] 2.2 Unit-test extraction in `tests/unit/fragment.test.ts`
     - Well-formed: the generated pages from task 1.2 all extract successfully, and the
       returned fragment's structure matches the source template
     - Contract-violating, one case per obligation, each asserting the failure names the
@@ -126,7 +126,7 @@ it.
       carrying an inline handler attribute, which is adopted unchanged by design
     - _Requirements: 3.1, 3.2, 3.3, 3.6, 3.7, 10.1_
 
-- [ ] 3. Checkpoint - pages and extraction complete
+- [x] 3. Checkpoint - pages and extraction complete
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 4. Build the content resolver
@@ -433,6 +433,34 @@ it.
 - The awkward fixtures from task 1.4 are deliberately excluded from every visual spec.
   Realism in the contract tests must not be paid for in baselines.
 - No new dependency. `fetch`, `DOMParser`, and a Node script are the whole toolkit.
+
+### Learned during execution
+
+Recorded here because each one constrains a task that has not run yet.
+
+- **Task 6.1 must convert the parity test, not delete it.** Task 1.5's strongest
+  assertion compares the generated template against `renderDetail`'s *live* output
+  for all sixteen records, and that comparison is only possible while the
+  five-field skeleton still exists. When 6.1 removes the skeleton, capture the
+  normalised structures as golden strings from the passing test and compare against
+  those. Deleting it would drop the only mechanical guarantee behind Requirement 12.
+- **Task 10.3's failing-response test must intercept the route.** Vite's dev server
+  SPA-falls back to `index.html` for unknown paths under `/detail/`, returning
+  **200** with the index document rather than a 404. So a missing page cannot
+  simulate a failed response; it lands on `missing-region` instead. Use Playwright
+  route interception to produce a genuine non-OK status.
+- **`allowImportingTsExtensions` is now `true` in `tsconfig.json`.** Node's native
+  type stripping resolves relative specifiers by ESM rules and so requires the
+  explicit `.ts` extension, which `tsc` rejected. Enabling the flag was the
+  alternative to adding a transpiler dependency, and is safe because the project is
+  `noEmit` and Vite owns the build. `scripts` was added to the tsconfig `include`
+  so the generator is genuinely typechecked. Application code under `src/` stays
+  extensionless. No dependency was added, so Requirement 13.8 still holds.
+- **A `<template>`'s content is invisible to document-level `querySelectorAll`.**
+  Its content lives in a separate `DocumentFragment`. This is why
+  `extractFragment` scopes the "exactly one heading" check to `template.content`,
+  and it is asserted in both new suites so a future refactor cannot quietly widen
+  the query to the document and start matching a page's visible copy.
 
 ## Task Dependency Graph
 

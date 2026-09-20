@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>A page with real content in it</title>
+  </head>
+  <body>
+    <template data-paper-turn-detail data-paper-turn-color="#bd6100">
+      <p class="eyebrow">Fixture</p>
+      <h2 data-detail-heading tabindex="-1">Content this repo did not author</h2>
+      <p>
+        Nothing here matches the five-field skeleton. That is the point: a real
+        page nests, uses headings past <code>h3</code>, and carries media.
+      </p>
+
+      <section>
+        <h3>Nested past one level</h3>
+        <div class="wrapper">
+          <div class="wrapper-inner">
+            <h4>Fourth level</h4>
+            <p>Depth alone must not break extraction.</p>
+            <div>
+              <h5>Fifth level</h5>
+              <p>Nor this.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <figure>
+        <img
+          src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2264%22%20height%3D%2264%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20fill%3D%22%23bd6100%22%2F%3E%3C%2Fsvg%3E"
+          alt="A solid orange square"
+          width="64"
+          height="64"
+        />
+        <figcaption>An inline data-URI image, so the fixture needs no network.</figcaption>
+      </figure>
+
+      <blockquote cite="https://example.invalid/">
+        <p>Block-level quotation, which the skeleton had no slot for.</p>
+      </blockquote>
+
+      <table>
+        <caption>A table, which the skeleton also had no slot for</caption>
+        <thead>
+          <tr><th scope="col">Element</th><th scope="col">Present</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>figure</td><td>yes</td></tr>
+          <tr><td>table</td><td>yes</td></tr>
+        </tbody>
+      </table>
+
+      <ul>
+        <li>A list item</li>
+        <li>Another, with <a href="https://example.invalid/">a link</a> inside it</li>
+      </ul>
+
+      <!-- Scoped styling that travels with the fragment. Adoption must not drop
+           it, and it must not leak into the shell's own rules. -->
+      <style>
+        .wrapper-inner { padding-inline-start: 12px; }
+      </style>
+
+      <p class="detail-footer">Bottom of the rich content fixture</p>
+    </template>
+
+    <main>
+      <h1>A page with real content in it</h1>
+      <p>Standalone rendering. The adoptable copy is in the template above.</p>
+    </main>
+  </body>
+</html>
