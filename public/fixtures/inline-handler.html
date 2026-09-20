@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>A page carrying an inline handler</title>
+  </head>
+  <body>
+    <!--
+      This fixture is a recorded decision, not an oversight.
+
+      The design's position is that fragments are adopted faithfully and nothing
+      is sanitised, because the reverse face is supposed to be the real page.
+      What licenses that is an assumption rather than the origin: the detail
+      page's content must be no less trusted than the page adopting it.
+
+      Two facts this fixture pins down:
+
+      1. `DOMParser` inertness is a property of the *parse*, not of the adoption.
+         A <script> element will not run, but the `onerror` below fires the moment
+         these nodes are live in a document.
+      2. The extractor must not strip it. A future change that quietly adds
+         sanitisation will fail the test that reads this fixture, which forces the
+         decision back into the open.
+    -->
+    <template data-paper-turn-detail data-paper-turn-color="#e34850">
+      <p class="eyebrow">Fixture</p>
+      <h2 data-detail-heading tabindex="-1">Adopted unchanged, handler and all</h2>
+
+      <p>
+        The image below has a broken <code>src</code> and an inline
+        <code>onerror</code>. Both survive extraction verbatim.
+      </p>
+
+      <img
+        src="does-not-exist.png"
+        alt=""
+        onerror="globalThis.__paperTurnFixtureHandlerFired = true;"
+      />
+
+      <button type="button" onclick="globalThis.__paperTurnFixtureClickFired = true;">
+        Inline onclick
+      </button>
+
+      <!-- Will not execute on adoption: importNode does not run script elements. -->
+      <script>
+        globalThis.__paperTurnFixtureScriptFired = true;
+      </script>
+
+      <p class="detail-footer">Bottom of the inline handler fixture</p>
+    </template>
+
+    <main>
+      <h1>A page carrying an inline handler</h1>
+      <p>Standalone rendering. The adoptable copy is in the template above.</p>
+    </main>
+  </body>
+</html>

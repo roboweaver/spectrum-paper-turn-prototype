@@ -79,7 +79,7 @@ describe('DomTransitionView', () => {
     const view = new DomTransitionView({
       list: fixture.list,
       detail: fixture.detail,
-      heading: fixture.heading,
+      heading: () => fixture.heading,
       fallback: fixture.fallback,
       renderDetail: fixture.renderDetail,
     });
@@ -97,7 +97,7 @@ describe('DomTransitionView', () => {
     const view = new DomTransitionView({
       list: fixture.list,
       detail: fixture.detail,
-      heading: fixture.heading,
+      heading: () => fixture.heading,
       fallback: fixture.fallback,
       renderDetail: fixture.renderDetail,
     });
@@ -109,7 +109,7 @@ describe('DomTransitionView', () => {
     const view = new DomTransitionView({
       list: fixture.list,
       detail: fixture.detail,
-      heading: fixture.heading,
+      heading: () => fixture.heading,
       fallback: fixture.fallback,
       renderDetail: fixture.renderDetail,
     });
@@ -121,7 +121,7 @@ describe('DomTransitionView', () => {
     const view = new DomTransitionView({
       list: fixture.list,
       detail: fixture.detail,
-      heading: fixture.heading,
+      heading: () => fixture.heading,
       fallback: fixture.fallback,
       renderDetail: fixture.renderDetail,
     });
@@ -146,7 +146,7 @@ describe('DomTransitionView', () => {
     const view = new DomTransitionView({
       list: fixture.list,
       detail: fixture.detail,
-      heading: fixture.heading,
+      heading: () => fixture.heading,
       fallback: fixture.fallback,
       renderDetail: fixture.renderDetail,
     });
@@ -158,7 +158,7 @@ describe('DomTransitionView', () => {
     const view = new DomTransitionView({
       list: fixture.list,
       detail: fixture.detail,
-      heading: fixture.heading,
+      heading: () => fixture.heading,
       fallback: fixture.fallback,
       renderDetail: fixture.renderDetail,
     });
@@ -182,7 +182,7 @@ describe('DomTransitionView', () => {
     const view = new DomTransitionView({
       list: fixture.list,
       detail: fixture.detail,
-      heading: fixture.heading,
+      heading: () => fixture.heading,
       fallback: fixture.fallback,
       renderDetail: fixture.renderDetail,
     });
@@ -209,7 +209,7 @@ describe('DomTransitionView', () => {
     const view = new DomTransitionView({
       list: fixture.list,
       detail: fixture.detail,
-      heading: fixture.heading,
+      heading: () => fixture.heading,
       fallback: fixture.fallback,
       renderDetail: fixture.renderDetail,
     });
@@ -237,7 +237,7 @@ describe('DomTransitionView', () => {
     const view = new DomTransitionView({
       list: fixture.list,
       detail: fixture.detail,
-      heading: fixture.heading,
+      heading: () => fixture.heading,
       fallback: fixture.fallback,
       renderDetail: fixture.renderDetail,
     });

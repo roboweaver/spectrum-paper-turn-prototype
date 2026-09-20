@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Spectrum foundations</title>
+  </head>
+  <body>
+    <!--
+      A page marking two adoptable regions, which is an authoring mistake rather
+      than an unrecoverable state.
+
+      The shape is realistic: a theme renders the same detail partial twice, once
+      in a sidebar widget and once for the article the URL is actually for. The
+      sidebar copy comes first in document order, so a first-match extractor adopts
+      *that* one — and the sheet then shows "Workflow patterns" while the page is
+      "Spectrum foundations".
+
+      Extraction succeeds and warns. Failing instead would switch the enhancement
+      off on hosts where duplicated markers are routine, and first-match is usually
+      right; staying silent would leave the wrong-content case looking like a bug in
+      the renderer. So: default to document order, and say so.
+    -->
+    <aside class="related-posts">
+      <template data-paper-turn-detail data-paper-turn-color="#d83790">
+        <p class="eyebrow">Interaction</p>
+        <h2 data-detail-heading tabindex="-1">Workflow patterns</h2>
+        <p>Predictable controls and feedback for focused creative work.</p>
+      </template>
+    </aside>
+
+    <main>
+      <template data-paper-turn-detail data-paper-turn-color="#5c5ce0">
+        <p class="eyebrow">Design system</p>
+        <h2 data-detail-heading tabindex="-1">Spectrum foundations</h2>
+        <p>Color, typography, and layout for coherent product experiences.</p>
+      </template>
+
+      <h1>Spectrum foundations</h1>
+      <p>Standalone rendering.</p>
+    </main>
+  </body>
+</html>

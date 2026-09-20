@@ -9,23 +9,47 @@ export interface CardRecord {
   subtitle: string;
   description: string;
   color: string;
-  /** Body copy for the detail page, so the sheet carries readable text from
-   *  top to bottom while it turns. */
+  /**
+   * The detail page this tile opens, as a path relative to the index document.
+   *
+   * Must be same-origin once resolved against the document base URL: the
+   * transition adopts real DOM from this URL, and a cross-origin document
+   * cannot be adopted. Relative rather than root-absolute so one build works at
+   * a domain root, under the GitHub Pages subpath, and from the filesystem — the
+   * same reason `vite.config.ts` sets `base: './'`.
+   */
+  url: string;
+  /** Body copy for the detail page. Consumed by `scripts/generate-detail-pages.ts`
+   *  to emit the page at `url`; no longer read when a transition opens. */
   sections: readonly CardSection[];
   /** Printed at the very bottom of the detail page so the sheet's trailing
-   *  edge is identifiable mid-turn. */
+   *  edge is identifiable mid-turn. Generator input, as with `sections`. */
   footer: string;
 }
 
+/** Directory, relative to the site root, holding the generated detail pages. */
+export const DETAIL_PAGE_DIR = 'detail';
+
 /**
- * The demo tiles, in grid order.
+ * The detail page path for a record id.
+ *
+ * Both sides of the contract call this — the records below for their `url`, and
+ * the generator for its output filename — so a tile cannot come to point at a
+ * page that was never emitted.
+ */
+export function detailPagePath(id: string): string {
+  return `${DETAIL_PAGE_DIR}/${id}.html`;
+}
+
+/**
+ * The demo tiles, in grid order, without their derived `url`.
  *
  * Sixteen of them, because the grab anchor is resolved from the tile's position
  * in the grid and sixteen is what a 4 x 4 needs. The demo shows the first `n` of
  * these, where `n` is the tile count control's value, so the first three records
  * are the three the prototype has always opened with.
  */
-export const cards: readonly CardRecord[] = [
+const cardData: readonly Omit<CardRecord, 'url'>[] = [
   {
     id: 'spectrum',
     title: 'Spectrum foundations',
@@ -379,6 +403,17 @@ export const cards: readonly CardRecord[] = [
     footer: 'Bottom of the Testing surfaces page',
   },
 ] as const;
+
+/**
+ * The demo tiles, in grid order, each addressing its own detail page.
+ *
+ * `url` is derived rather than authored so it cannot drift from `id`, which is
+ * what the generator names its output after.
+ */
+export const cards: readonly CardRecord[] = cardData.map((card) => ({
+  ...card,
+  url: detailPagePath(card.id),
+}));
 
 export function cardById(id: string): CardRecord {
   const card = cards.find((candidate) => candidate.id === id);

@@ -3,7 +3,14 @@ import type { Rect, TransitionView } from './types';
 export interface DomTransitionViewOptions {
   list: HTMLElement;
   detail: HTMLElement;
-  heading: HTMLElement;
+  /**
+   * Resolves the detail surface's focus target at the moment focus is moved.
+   *
+   * A function rather than an element because the heading now arrives with the
+   * adopted fragment and is a different element after every activation. Capturing
+   * one at construction would focus a node that had been replaced.
+   */
+  heading(): HTMLElement | null;
   fallback: HTMLElement;
   renderDetail(sourceId: string): void;
 }
@@ -134,7 +141,22 @@ export class DomTransitionView implements TransitionView {
   }
 
   public focusDetailHeading(): void {
-    this.options.heading.focus({ preventScroll: true });
+    const heading = this.options.heading();
+
+    if (heading) {
+      heading.focus({ preventScroll: true });
+      return;
+    }
+
+    // The fragment contract guarantees exactly one heading, and adoption happens
+    // in `prepareDetail` before the settle step runs, so reaching here means a
+    // wiring fault rather than an authoring one. Focus the surface itself instead
+    // of leaving focus on the tile, which is about to be hidden and would drop
+    // focus to the body.
+    console.error(
+      'Paper-turn: the adopted detail content has no [data-detail-heading]; focusing the surface instead.',
+    );
+    this.options.detail.focus({ preventScroll: true });
   }
 
   public focusListFallback(): void {

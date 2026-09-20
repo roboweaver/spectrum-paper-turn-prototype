@@ -139,6 +139,28 @@ function themeTokenCss(element: HTMLElement): string {
   return css;
 }
 
+/**
+ * Recognises the tainted-canvas failure among other capture failures.
+ *
+ * Matched by name and message rather than by type: the throw comes from the
+ * platform during `toDataURL`/`getImageData` on a canvas that a cross-origin
+ * subresource has tainted, and engines word it differently while agreeing on
+ * `SecurityError` and on the word "tainted".
+ */
+function isTaintedCanvasError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const description = `${error.name} ${error.message}`.toLowerCase();
+
+  return (
+    description.includes('securityerror') ||
+    description.includes('tainted') ||
+    description.includes('cross-origin data')
+  );
+}
+
 export async function captureElement(
   element: HTMLElement,
   profile: MotionProfile,
@@ -168,6 +190,22 @@ export async function captureElement(
       cacheBust: true,
       ...(styleOverrides ? { style: styleOverrides } : {}),
     });
+  } catch (error) {
+    if (isTaintedCanvasError(error)) {
+      // Deliberately not mitigated. The existing degradation is already correct:
+      // the coordinator treats capture failure as an explicit outcome and settles
+      // through the fallback, so the page still opens without the turn.
+      //
+      // What this needs is to be *known* rather than mysterious. The symptom -- "the
+      // turn works on every page except that one" -- invites a hunt for a geometry
+      // or renderer bug that is not there, so the cause is named here instead of
+      // inferred.
+      console.error(
+        'Paper-turn: the destination capture was blocked by a tainted canvas, which means the page loaded a cross-origin subresource without `crossorigin`. Serve images on turnable pages same-origin or with `crossorigin`. Settling through the fallback transition.',
+        error,
+      );
+    }
+    throw error;
   } finally {
     if (tokens) {
       if (previousStyle === null) {

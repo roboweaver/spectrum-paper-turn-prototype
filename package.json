@@ -4,7 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "generate:detail-pages": "node scripts/generate-detail-pages.ts",
+    "predev": "npm run generate:detail-pages",
     "dev": "vite",
+    "prebuild": "npm run generate:detail-pages",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint --error-on-warnings .",

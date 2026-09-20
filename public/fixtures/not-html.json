@@ -1,0 +1,6 @@
+{
+  "why": "A non-HTML body, to prove what DOMParser does with one rather than assume it.",
+  "behaviour": "parseFromString(body, 'text/html') does not throw and produces no parsererror node — that is XML-mode behaviour. This lands in a document whose body holds this text and no marked region, so it fails as missing-region.",
+  "consequence": "The 'body does not parse' branch of Requirement 3.6 is unreachable for text/html. The extractor documents that instead of pretending to detect it.",
+  "heading": "there is deliberately no data-detail-heading in here"
+}

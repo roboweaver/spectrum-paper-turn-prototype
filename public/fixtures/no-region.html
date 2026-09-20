@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>A page that is not turnable</title>
+  </head>
+  <body>
+    <!-- A perfectly good page with no [data-paper-turn-detail] anywhere. The
+         correct outcome is a fall-through to ordinary navigation: the link works,
+         the enhancement simply does not apply. -->
+    <main>
+      <h1>A page that is not turnable</h1>
+      <p>No adoptable region is marked, so extraction must report missing-region.</p>
+      <h2>Note the heading below is not marked either</h2>
+      <h2>So "find any h2" would be the wrong fallback</h2>
+    </main>
+  </body>
+</html>

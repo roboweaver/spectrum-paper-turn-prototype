@@ -121,6 +121,46 @@ describe('captureElement', () => {
     expect(toCanvas.mock.calls[0]?.[1]).not.toHaveProperty('style');
   });
 
+  it('names a tainted canvas distinguishably, and still rethrows it', async () => {
+    // Deliberately not mitigated: the coordinator already settles a capture failure
+    // through the fallback, so the page opens without the turn. What this adds is
+    // diagnosability. "The turn works on every page except that one" otherwise
+    // invites a hunt for a geometry or renderer bug that is not there.
+    const report = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const element = createSourceElement(800, 600);
+    const tainted = new Error('Tainted canvases may not be exported.');
+    tainted.name = 'SecurityError';
+    const toCanvas = vi.fn(async () => {
+      throw tainted;
+    });
+
+    await expect(
+      captureElement(element, defaultMotionProfile, undefined, toCanvas, 1),
+    ).rejects.toBe(tainted);
+
+    expect(report).toHaveBeenCalledTimes(1);
+    const message = String(report.mock.calls[0]?.[0] ?? '');
+    expect(message).toContain('Paper-turn');
+    expect(message).toContain('tainted canvas');
+    expect(message).toContain('crossorigin');
+  });
+
+  it('does not blame cross-origin assets for an unrelated capture failure', async () => {
+    // The two signals have to stay distinguishable, or the log becomes noise that
+    // gets ignored exactly when it matters.
+    const report = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const element = createSourceElement(800, 600);
+    const toCanvas = vi.fn(async () => {
+      throw new Error('html-to-image ran out of memory');
+    });
+
+    await expect(
+      captureElement(element, defaultMotionProfile, undefined, toCanvas, 1),
+    ).rejects.toThrow('ran out of memory');
+
+    expect(report).not.toHaveBeenCalled();
+  });
+
   it('rethrows capture failures by identity', async () => {
     const element = createSourceElement(800, 600);
     const error = new Error('tainted source');

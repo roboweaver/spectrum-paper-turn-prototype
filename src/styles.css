@@ -135,6 +135,12 @@ button { font: inherit; }
   padding: 0;
   border: 0;
   color: inherit;
+  /* The trigger is an <a> so the index works without JavaScript and modified
+     clicks behave natively. `color: inherit` handles the UA link colour, but the
+     UA underline needs removing explicitly -- and it inherits into sp-card's
+     slotted heading and subheading, so leaving it in would underline the text in
+     every tile and move all six visual baselines. */
+  text-decoration: none;
   text-align: left;
   background: transparent;
   cursor: pointer;

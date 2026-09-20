@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Template with two focus targets</title>
+  </head>
+  <body>
+    <!--
+      Two [data-detail-heading] elements in one marked template.
+
+      Ambiguity, not a shortage. Picking the first would be a silent guess about
+      where focus lands, and the author would get an arbitrary answer with no
+      signal that they had authored something meaningless. Fail and name it.
+    -->
+    <template data-paper-turn-detail data-paper-turn-color="#9256d9">
+      <h2 data-detail-heading tabindex="-1">First</h2>
+      <p>Body between them.</p>
+      <h2 data-detail-heading tabindex="-1">Second</h2>
+      <p>Extraction must report ambiguous-heading.</p>
+    </template>
+
+    <main>
+      <h1>Template with two focus targets</h1>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Template without a focus target</title>
+  </head>
+  <body>
+    <!--
+      Marked template, correct element, but no [data-detail-heading].
+
+      This one has to fail rather than degrade. `settleOpen` moves focus to the
+      heading, so adopting this would land the turn with focus detached from the
+      surface — which is exactly the accessibility failure the contract's required
+      focus target exists to prevent. Note there *is* an h2 here; the contract
+      wants a marked one, not a guessed one.
+    -->
+    <template data-paper-turn-detail data-paper-turn-color="#268e6c">
+      <p class="eyebrow">Fixture</p>
+      <h2>Unmarked heading</h2>
+      <p>Extraction must report missing-heading.</p>
+    </template>
+
+    <main>
+      <h1>Template without a focus target</h1>
+    </main>
+  </body>
+</html>
