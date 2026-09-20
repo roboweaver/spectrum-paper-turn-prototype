@@ -189,6 +189,7 @@ export function createDemoApp(
   const cardGrid = listFocusFallback;
   let renderedCount = 0;
   let pendingDetail: PendingDetail | null = null;
+  let adoptedSourceId: string | null = null;
 
   /**
    * Measure every tile in the grid, in document order, so the activated tile's
@@ -260,7 +261,20 @@ export function createDemoApp(
     cardGrid,
     setPendingDetail(pending: PendingDetail | null) {
       pendingDetail = pending;
+      // Staging new content invalidates any previous adoption, so the next
+      // `renderDetail` adopts rather than short-circuiting.
+      adoptedSourceId = null;
     },
+    /**
+     * Adopt the staged content. **Idempotent** for a given activation.
+     *
+     * Called twice per activation, and the idempotence is what makes that safe.
+     * The activation path calls it first so that images can begin loading and be
+     * awaited before the capture; `coordinator.open()` then calls it again through
+     * `prepareDetail`. Re-adopting on the second call would replace the nodes with
+     * fresh ones and restart their subresource loading, discarding the wait that
+     * had just been paid for.
+     */
     renderDetail(sourceId: string) {
       if (!pendingDetail) {
         throw new Error(
@@ -279,11 +293,16 @@ export function createDemoApp(
         );
       }
 
+      if (adoptedSourceId === sourceId) {
+        return;
+      }
+
       // Deep copy, so the resolver's fragment survives for a retry and the
       // adopted nodes are ours. `replaceChildren` clears the previous adoption
       // entirely, leaving none of it behind.
       detailContent.replaceChildren(document.importNode(pendingDetail.fragment, true));
       detailSurface.style.setProperty('--detail-color', pendingDetail.color);
+      adoptedSourceId = sourceId;
     },
     resolveSource(sourceId: string) {
       return Array.from(root.querySelectorAll<HTMLElement>('[data-card-trigger]')).find((element) => element.dataset.sourceId === sourceId) ?? null;

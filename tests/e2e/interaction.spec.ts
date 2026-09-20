@@ -731,3 +731,211 @@ test('an authored data-grabbed-corner attribute cannot move the published anchor
   expect(pageErrors).toEqual([]);
   expect(consoleNoise.filter((entry) => /anchor|corner|grab/i.test(entry))).toEqual([]);
 });
+
+/*
+ * URL-addressable detail content.
+ *
+ * The detail surface is now built from a fetched same-origin page rather than from a
+ * compile-time record, so these cover the paths that only exist once a network is
+ * involved: a slow response, a failing one, supersession, and the modified clicks a
+ * real anchor has to leave alone.
+ *
+ * On stubbing: the Vite dev server SPA-falls back to `index.html` for unknown paths
+ * under `/detail/`, answering **200** with the index document rather than 404. So a
+ * missing file cannot simulate a failed response -- it lands on `missing-region`
+ * instead. These intercept the route to produce a genuine status.
+ */
+
+/** Holds `/detail/*` open until the returned release function is called. */
+async function stallDetailRoutes(page: Page): Promise<() => Promise<void>> {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolveGate) => {
+    release = () => resolveGate();
+  });
+
+  await page.route('**/detail/*.html', async (route) => {
+    await gate;
+    await route.continue();
+  });
+
+  return async () => {
+    release();
+  };
+}
+
+test('a pending resolution leaves the list live and freezes nothing', async ({ page }) => {
+  await page.goto('/?duration=120');
+  const release = await stallDetailRoutes(page);
+  const card = cardTrigger(page, 0);
+
+  await card.click();
+
+  // Nothing may be frozen or inert before content is in hand. The coordinator is
+  // still idle, so `setBusy` and `freezeScroll` have not run.
+  await expect(listSurface(page)).toHaveAttribute('aria-busy', 'false');
+  await expect(detailSurface(page)).toBeHidden();
+  // `freezeScroll` pins the body with `position: fixed`; it must not have run.
+  expect(await page.evaluate(() => document.body.style.position)).toBe('');
+  // And the list is not inert, so the other tiles remain usable.
+  expect(await listSurface(page).evaluate((element) => (element as HTMLElement).inert)).toBe(false);
+
+  // And the turn runs once the content arrives.
+  await release();
+  await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toBeFocused();
+});
+
+test('a failing response falls through to a real navigation', async ({ page }) => {
+  await page.goto('/?duration=120');
+  await page.route('**/detail/*.html', (route) => route.fulfill({ status: 503, body: 'nope' }));
+
+  const href = await cardTrigger(page, 0).getAttribute('href');
+  expect(href).toBeTruthy();
+
+  // The enhancement is lost, the destination is not: the tile is a real link.
+  await Promise.all([
+    page.waitForURL((url) => url.pathname.endsWith('/detail/spectrum.html')),
+    cardTrigger(page, 0).click(),
+  ]);
+
+  // Unrouting so the navigation itself is served normally, then the standalone page
+  // must render its own content -- the obligation the component must never break.
+  await page.unroute('**/detail/*.html');
+  await page.goto('/detail/spectrum.html');
+  await expect(page.locator('main h2')).toHaveText('Spectrum foundations');
+});
+
+test('a contract violation also falls through rather than opening blank', async ({ page }) => {
+  await page.goto('/?duration=120');
+  await page.route('**/detail/*.html', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<!doctype html><html><body><main><h1>No adoptable region</h1></main></body></html>',
+    }),
+  );
+
+  await Promise.all([
+    page.waitForURL((url) => url.pathname.endsWith('/detail/spectrum.html')),
+    cardTrigger(page, 0).click(),
+  ]);
+});
+
+test('a second activation during a pending resolution opens the second tile', async ({ page }) => {
+  await page.goto('/?duration=120');
+  const release = await stallDetailRoutes(page);
+
+  await cardTrigger(page, 0).click();
+  await cardTrigger(page, 1).click();
+  await release();
+
+  // The later activation wins, and the earlier one neither opens nor navigates.
+  await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toHaveText('Workflow patterns');
+  expect(new URL(page.url()).pathname).toBe('/');
+});
+
+test('Escape during a pending resolution leaves nothing to unwind', async ({ page }) => {
+  await page.goto('/?duration=120');
+  const release = await stallDetailRoutes(page);
+
+  await cardTrigger(page, 0).click();
+  await page.keyboard.press('Escape');
+
+  // Still idle: the coordinator was never called, so Escape has no transition to
+  // cancel and the page is simply as it was.
+  await expect(detailSurface(page)).toBeHidden();
+  await expect(listSurface(page)).toHaveAttribute('aria-busy', 'false');
+
+  await release();
+});
+
+test('each tile is an anchor addressing its own detail page', async ({ page }) => {
+  await page.goto('/?tiles=16');
+
+  const triggers = page.locator('[data-card-trigger]');
+  await expect(triggers).toHaveCount(16);
+
+  for (const index of [0, 1, 15]) {
+    const trigger = triggers.nth(index);
+    expect(await trigger.evaluate((element) => element.tagName)).toBe('A');
+    await expect(trigger).toHaveAttribute('href', /^detail\/[a-z0-9-]+\.html$/);
+  }
+});
+
+test('a modified click is left to the browser', async ({ page }) => {
+  // Swallowing these is the classic way a transition breaks the browser.
+  //
+  // What "left to the browser" looks like is platform-dependent, and that is the
+  // point rather than a nuisance: desktop Chromium opens Shift-click in a new window
+  // and leaves this page alone, while mobile WebKit navigates in place. So the
+  // assertion is the one thing true of both -- the paper-turn never runs -- and the
+  // page is reloaded between cases because a native navigation may have left the
+  // index entirely. `toBeHidden` is satisfied by a detached element too, which is why
+  // it works across both outcomes where an attribute check would not.
+  for (const modifier of ['Shift', 'Alt'] as const) {
+    await page.goto('/?duration=120');
+    await cardTrigger(page, 0).click({ modifiers: [modifier] });
+    await expect(detailSurface(page)).toBeHidden();
+  }
+
+  await page.goto('/?duration=120');
+  await cardTrigger(page, 0).click({ button: 'middle' });
+  await expect(detailSurface(page)).toBeHidden();
+
+  // And an ordinary primary click still opens, so the guard has not disabled the
+  // feature it exists to protect.
+  await page.goto('/?duration=120');
+  await cardTrigger(page, 0).click();
+  await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toBeFocused();
+});
+
+test('the no-JavaScript claim belongs to the host, not to this prototype', async ({ page }) => {
+  // Recording a limitation rather than a feature.
+  //
+  // The design lists "the index works with JavaScript disabled or still loading"
+  // among the reasons tiles became anchors. That is true of a server-rendered host
+  // -- Grimoire, WordPress, OmnisTools all emit their links in HTML -- and false
+  // here: `index.html` is an empty `<div id="app">` and `createDemoApp` builds the
+  // entire grid at runtime. Block the module and there are no tiles to click, links
+  // or not.
+  //
+  // Pinned so nobody later reads the anchor change as having bought something it did
+  // not. The benefits that *are* real in this repo: a genuine `href` for the
+  // fall-through navigation to use, native modified-click behaviour, and correct
+  // link semantics for assistive technology once rendered.
+  await page.route('**/src/main.ts', (route) => route.abort());
+  await page.goto('/');
+
+  await expect(page.locator('[data-card-trigger]')).toHaveCount(0);
+  expect(await page.evaluate(() => document.querySelector('#app')?.innerHTML ?? '')).toBe('');
+});
+
+test('the adopted detail content is the fetched page, not a local record', async ({ page }) => {
+  await page.goto('/?duration=120');
+  await page.route('**/detail/spectrum.html', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: `<!doctype html><html><head><title>Served</title></head><body>
+        <template data-paper-turn-detail data-paper-turn-color="#00a0a0">
+          <h2 data-detail-heading tabindex="-1">Served from the network</h2>
+          <p class="detail-footer">Proof the content is not local</p>
+        </template>
+        <main><h2>Served from the network</h2></main>
+      </body></html>`,
+    }),
+  );
+
+  await cardTrigger(page, 0).click();
+
+  await expect(detailHeading(page)).toHaveText('Served from the network');
+  await expect(detailSurface(page)).toContainText('Proof the content is not local');
+  // The colour comes from the page's hint rather than from CardRecord.color.
+  expect(
+    await detailSurface(page).evaluate((element) =>
+      element.style.getPropertyValue('--detail-color'),
+    ),
+  ).toBe('#00a0a0');
+});

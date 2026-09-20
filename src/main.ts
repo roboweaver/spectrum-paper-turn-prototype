@@ -19,6 +19,7 @@ import { tileCountFromParams } from './tile-grid';
 import { TransitionCoordinator } from './transition/transition-coordinator';
 import { resolveGrabAnchor } from './transition/grab-anchor';
 import { createContentResolver } from './content/content-resolver';
+import { awaitCaptureReadiness } from './content/capture-readiness';
 import type { MotionProfile } from './transition/types';
 
 declare global {
@@ -179,8 +180,31 @@ async function activate(event: MouseEvent, trigger: HTMLElement): Promise<void> 
     color: outcome.color,
   });
 
-  // Measured after resolution and immediately before `open()`, so no layout read
-  // is attributable to the frame loop and none happens again while the turn runs.
+  // Adopt here rather than leaving it to the coordinator's `prepareDetail`, because
+  // nothing in the fragment loads until it is in the live document and the capture
+  // needs those loads finished. `renderDetail` is idempotent for one activation, so
+  // `prepareDetail` calling it again is a no-op rather than a re-adoption that would
+  // restart the loading this wait just paid for.
+  app.renderDetail(sourceId);
+
+  const readiness = await awaitCaptureReadiness(app.detailSurface, {
+    timeoutMs: resolver.config.captureReadinessTimeoutMs,
+  });
+
+  if (readiness.timedOut) {
+    console.warn(
+      `Paper-turn: capture readiness for ${href} exceeded ${resolver.config.captureReadinessTimeoutMs}ms; capturing anyway. The reverse face may show unloaded assets.`,
+    );
+  }
+
+  if (coordinator.state !== 'idle') {
+    // The readiness wait is another await, so re-check rather than assume.
+    return;
+  }
+
+  // Measured after resolution and readiness, immediately before `open()`, so no
+  // layout read is attributable to the frame loop and none happens again while the
+  // turn runs.
   //
   // The anchor is derived from position alone: no element attribute, constant, or
   // runtime parameter can override it.

@@ -153,6 +153,40 @@ describe('createDemoApp', () => {
     expect(content?.querySelector(':scope > h2[data-detail-heading]')).not.toBeNull();
   });
 
+  it('adopts once per activation, however many times it is asked', () => {
+    // Load-bearing. The activation path adopts so that images can start loading and
+    // be awaited before the capture; `coordinator.open()` then calls `prepareDetail`,
+    // which calls this again. A second real adoption would replace the nodes with
+    // fresh ones and restart their subresource loading, throwing away the readiness
+    // wait that had just been paid for.
+    const root = document.createElement('div');
+    const app = createDemoApp(root);
+
+    app.setPendingDetail(stagedDetail('spectrum', '#5c5ce0'));
+    app.renderDetail('spectrum');
+
+    const firstHeading = app.detailHeading();
+    app.renderDetail('spectrum');
+    app.renderDetail('spectrum');
+
+    // The same node, not an equal one: identity is what proves nothing was replaced.
+    expect(app.detailHeading()).toBe(firstHeading);
+  });
+
+  it('adopts again once new content is staged', () => {
+    const root = document.createElement('div');
+    const app = createDemoApp(root);
+
+    app.setPendingDetail(stagedDetail('spectrum', '#5c5ce0'));
+    app.renderDetail('spectrum');
+    const firstHeading = app.detailHeading();
+
+    app.setPendingDetail(stagedDetail('spectrum', '#5c5ce0'));
+    app.renderDetail('spectrum');
+
+    expect(app.detailHeading()).not.toBe(firstHeading);
+  });
+
   it('replaces a previous adoption entirely', () => {
     const root = document.createElement('div');
     const app = createDemoApp(root);

@@ -276,8 +276,8 @@ it.
     committed images could have moved, and finding that now is much cheaper than after
     the activation path is rewired.
 
-- [ ] 9. Make the capture wait for content
-  - [ ] 9.1 Await fonts and images before capture
+- [x] 9. Make the capture wait for content
+  - [x] 9.1 Await fonts and images before capture
     - After adopting the fragment and before the destination is captured, await
       `document.fonts.ready`
     - Await every `<img>` in the adopted content to resolve `decode()` or report
@@ -290,7 +290,7 @@ it.
     - This runs in the activation path before `open()`, not inside the coordinator
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 1.1_
 
-  - [ ] 9.2 Log a tainted capture distinguishably in `src/transition/capture.ts`
+  - [x] 9.2 Log a tainted capture distinguishably in `src/transition/capture.ts`
     - Detect the tainted-canvas failure and log it distinguishably from other capture
       failures, naming cross-origin subresources as the likely cause
     - Change no capture behaviour otherwise: theme-token inlining, `cacheBust`, DPR and
@@ -299,7 +299,7 @@ it.
       fallback — so this task adds diagnosability, not recovery
     - _Requirements: 8.5, 7.5_
 
-  - [ ] 9.3 Test capture readiness
+  - [x] 9.3 Test capture readiness
     - Unit, in `tests/unit/capture.test.ts` and a readiness suite: fonts awaited before
       capture, images awaited, a failing `decode()` still proceeds, the bound elapsing
       still proceeds, and the tainted-capture log is distinguishable
@@ -307,7 +307,7 @@ it.
       asserted behaviour is that it degrades through the fallback
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 8.4, 8.5, 8.6_
 
-- [ ] 10. Rewire the activation path
+- [x] 10. Rewire the activation path
   - [x] 10.1 Resolve, then measure, then open in `src/main.ts`
     - In the delegated handler: guard the click (task 7.2), `preventDefault()`, resolve
       the trigger's URL, and only on success measure tiles, resolve the grab anchor, hand
@@ -329,7 +329,7 @@ it.
     - Do not fall through on behalf of a superseded activation
     - _Requirements: 8.1, 8.2, 8.3, 2.4_
 
-  - [ ] 10.3 Extend `tests/e2e/interaction.spec.ts`
+  - [x] 10.3 Extend `tests/e2e/interaction.spec.ts`
     - Activation against a stubbed slow response: the list stays scrollable and
       `aria-busy` stays `false` while pending, and the turn runs once content arrives
     - Activation against a failing response: the browser navigates to the detail page and
@@ -341,7 +341,7 @@ it.
       fallback tests continue to pass, since none of their paths were touched
     - _Requirements: 1.4, 1.5, 1.6, 2.2, 2.3, 8.1, 8.2, 8.3, 9.2_
 
-- [ ] 11. Checkpoint - the feature works end to end
+- [x] 11. Checkpoint - the feature works end to end
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 12. Document the contract and the posture
@@ -482,6 +482,37 @@ Recorded here because each one constrains a task that has not run yet.
   `noEmit` and Vite owns the build. `scripts` was added to the tsconfig `include`
   so the generator is genuinely typechecked. Application code under `src/` stays
   extensionless. No dependency was added, so Requirement 13.8 still holds.
+- **Adoption has to happen in the activation path, not only in `prepareDetail`.**
+  Nothing in a parsed fragment loads until it is in the live document, and both
+  adoption and the capture happen *inside* `coordinator.open()`. So awaiting
+  readiness "after adoption and before capture, outside the coordinator" is only
+  possible if the activation path adopts first. `renderDetail` is therefore
+  idempotent per activation: the activation path calls it, then waits, then
+  `prepareDetail` calls it again as a no-op. Re-adopting would replace the nodes and
+  restart the loading the wait had just paid for. Asserted by node identity.
+- **`document.fonts.ready` is a weaker guarantee here than it looks.** At readiness
+  time the detail surface is still `hidden`, so `display: none`. Browsers do load
+  `<img>` in a `display: none` subtree, so the image wait is real; font loading is
+  not reliably triggered by content with no layout. Nothing in this project loads a
+  webfont today so it has never mattered, but a page bringing its own font may still
+  capture with fallback metrics. Fixing it properly means measuring after the surface
+  is displayed and still clipped, which is inside the coordinator's `preparing` step
+  and out of scope for Phase 1. Recorded in `capture-readiness.ts`.
+- **The no-JavaScript benefit of anchors does not apply to this prototype.** The
+  design lists "the index works with JavaScript disabled or still loading" among the
+  reasons for the change. True of a server-rendered host; false here, because
+  `index.html` is an empty `<div id="app">` and `createDemoApp` builds the whole grid
+  at runtime. Block the module and there are no tiles at all, links or not. An
+  interaction test pins the limitation so the anchor change is not later credited
+  with something it did not buy. What is real in this repo: a genuine `href` for the
+  fall-through navigation, native modified-click behaviour, and correct link
+  semantics once rendered.
+- **"Left to the browser" means different things per platform.** Desktop Chromium
+  opens a Shift-click in a new window and leaves the page alone; mobile WebKit
+  navigates in place. A modified-click test therefore cannot assert on the index's
+  own elements afterwards — the first version failed on `webkit-mobile` for exactly
+  this reason, with the guard working correctly. The portable assertion is that the
+  turn never ran, using `toBeHidden`, which a detached element also satisfies.
 - **`new URL(value, base)` almost never throws, so `invalid-url` is mostly the
   same-origin check.** Arbitrary strings are valid *relative* URLs: `not a url::`
   resolves to `http://host/not%20a%20url::` and gets a request, failing on the
