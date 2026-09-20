@@ -138,8 +138,8 @@ it.
 - [x] 3. Checkpoint - pages and extraction complete
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 4. Build the content resolver
-  - [ ] 4.1 Create `src/content/resolver-config.ts`
+- [x] 4. Build the content resolver
+  - [x] 4.1 Create `src/content/resolver-config.ts`
     - Export `ResolverConfig` with the capture-readiness bound consumed in task 9, and a
       documented default
     - Record on the type that the latency budget and cache policy are Phase 2 fields and
@@ -148,7 +148,7 @@ it.
       leaves the four suites that build a `MotionProfile` literal compiling unmodified
     - _Requirements: 9.5_
 
-  - [ ] 4.2 Create `src/content/content-resolver.ts` with `resolve`
+  - [x] 4.2 Create `src/content/content-resolver.ts` with `resolve`
     - Export a resolver owning `resolve(url): Promise<FragmentResult>`: fetch, check
       response OK, read the body, delegate to `extractFragment`
     - Treat a non-OK response and a rejected request as failures of the same shape the
@@ -158,7 +158,7 @@ it.
     - Read no tile geometry, call no coordinator method, and mutate no detail surface
     - _Requirements: 1.7, 6.4, 8.1, 8.2_
 
-  - [ ] 4.3 Add the single-flight guard and supersession
+  - [x] 4.3 Add the single-flight guard and supersession
     - Deduplicate concurrent resolutions of the same URL onto one in-flight request
     - Track at most one non-superseded pending activation; a second activation supersedes
       the first rather than queueing behind it
@@ -171,7 +171,7 @@ it.
       `idle`, so a second click would otherwise slip past it
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
 
-  - [ ] 4.4 Unit-test the resolver in `tests/unit/content-resolver.test.ts`
+  - [x] 4.4 Unit-test the resolver in `tests/unit/content-resolver.test.ts`
     - Single-flight: two concurrent resolutions of one URL issue one request and both
       observe the same result
     - Supersession: a second activation supersedes the first; the first's late success is
@@ -184,7 +184,7 @@ it.
       and Phase 1 excludes
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 6.4, 8.1, 8.2, 13.3_
 
-- [ ] 5. Checkpoint - resolver complete
+- [x] 5. Checkpoint - resolver complete
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 6. Replace the five-field skeleton with one adopted region
@@ -465,6 +465,15 @@ Recorded here because each one constrains a task that has not run yet.
   `noEmit` and Vite owns the build. `scripts` was added to the tsconfig `include`
   so the generator is genuinely typechecked. Application code under `src/` stays
   extensionless. No dependency was added, so Requirement 13.8 still holds.
+- **`new URL(value, base)` almost never throws, so `invalid-url` is mostly the
+  same-origin check.** Arbitrary strings are valid *relative* URLs: `not a url::`
+  resolves to `http://host/not%20a%20url::` and gets a request, failing on the
+  response rather than on the URL. Only genuinely hostless forms throw — `http://`,
+  `//`, `http://[`. The cases that matter are `foo://bar`, whose origin is `null`,
+  and **`//evil.com/x`, which is protocol-relative and silently becomes
+  `http://evil.com/x`**. That last one is easy to author by accident and the
+  same-origin check is the only thing preventing another origin's DOM being adopted
+  into this document. It has its own test.
 - **A `<template>`'s content is invisible to document-level `querySelectorAll`.**
   Its content lives in a separate `DocumentFragment`. This is why
   `extractFragment` scopes the "exactly one heading" check to `template.content`,
