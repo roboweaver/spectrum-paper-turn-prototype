@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { renderDetailPage } from '../../scripts/generate-detail-pages';
 import { createDemoApp } from '../../src/app';
+import { extractFragment } from '../../src/content/fragment';
 import { type CardRecord, cards, detailPagePath } from '../../src/data/cards';
 
 /**
@@ -36,17 +39,23 @@ function structureOf(root: ParentNode): string {
     .join(',');
 }
 
-/** The live `.detail-content` for one record, as `renderDetail` builds it. */
-function liveDetailContent(card: CardRecord): HTMLElement {
-  const root = document.createElement('div');
-  const app = createDemoApp(root, 16);
-  app.renderDetail(card.id);
-  const content = root.querySelector<HTMLElement>('.detail-content');
-  if (!content) {
-    throw new Error('shell has no .detail-content');
-  }
-  return content;
-}
+/**
+ * The structures `renderDetail` produced before the five-field skeleton was
+ * removed, captured from the live shell while it still existed.
+ *
+ * These are the reference for Requirement 12. Five of the six committed visual
+ * frames carry captured detail content — only `paper-turn-start` is grid-only — so
+ * the generated pages must keep producing exactly this or ten reference images
+ * across two platforms move.
+ *
+ * Do not regenerate this file to make a failing test pass. A diff here means the
+ * rendered detail DOM has changed, which means the baselines have moved, which is
+ * a decision to make deliberately and review by eye rather than a fixture to
+ * refresh.
+ */
+const GOLDEN_STRUCTURES = JSON.parse(
+  readFileSync(resolve(process.cwd(), 'tests/unit/detail-content.golden.json'), 'utf8'),
+) as Record<string, string>;
 
 describe('generate-detail-pages', () => {
   it('emits one page per record, each satisfying the fragment contract', () => {
@@ -81,24 +90,46 @@ describe('generate-detail-pages', () => {
   });
 
   /**
-   * The load-bearing test.
+   * The load-bearing test, and the only mechanical guarantee behind Requirement 12.
    *
-   * Five of the six committed visual frames carry captured detail content — only
-   * `paper-turn-start` is grid-only — so when task 6 adopts a fragment in place of
-   * the five-field skeleton, the rendered DOM has to be identical or ten reference
-   * images across two platforms move.
-   *
-   * This compares against `renderDetail`'s *live* output, which is the strongest
-   * form the assertion can take and is only available while the old skeleton still
-   * exists. When task 6.1 removes that skeleton this comparison has to become a
-   * golden-string check captured from here; it must not simply be deleted.
+   * It compared against `renderDetail`'s live output while the five-field skeleton
+   * existed. Task 6.1 removed that skeleton, so the comparison is now against the
+   * structures captured from it — same assertion, frozen reference.
    */
-  it('reproduces the live renderDetail structure exactly, for every record', () => {
+  it('reproduces the pre-migration renderDetail structure exactly, for every record', () => {
+    expect(Object.keys(GOLDEN_STRUCTURES)).toHaveLength(cards.length);
+
     for (const card of cards) {
       const generated = structureOf(templateContentOf(renderDetailPage(card)));
-      const live = structureOf(liveDetailContent(card));
 
-      expect(generated, `record ${card.id}`).toBe(live);
+      expect(GOLDEN_STRUCTURES[card.id], `no golden structure for ${card.id}`).toBeDefined();
+      expect(generated, `record ${card.id}`).toBe(GOLDEN_STRUCTURES[card.id]);
+    }
+  });
+
+  it('produces, once adopted, the same structure the golden records', () => {
+    // The golden captures what the *shell* rendered. This asserts the round trip —
+    // generate a page, extract its fragment, adopt it into the real shell — lands
+    // in the same place. Without this, the generator could match the golden while
+    // adoption reshaped it on the way in.
+    for (const card of cards) {
+      const root = document.createElement('div');
+      const app = createDemoApp(root, 16);
+      const extracted = extractFragment(renderDetailPage(card));
+
+      expect(extracted.ok, card.id).toBe(true);
+      if (!extracted.ok) continue;
+
+      app.setPendingDetail({ sourceId: card.id, fragment: extracted.fragment, color: card.color });
+      app.renderDetail(card.id);
+
+      const content = root.querySelector<HTMLElement>('[data-detail-content]');
+      expect(content, card.id).not.toBeNull();
+      if (!content) continue;
+
+      expect(structureOf(content), `record ${card.id} after adoption`).toBe(
+        GOLDEN_STRUCTURES[card.id],
+      );
     }
   });
 

@@ -18,6 +18,7 @@ import { createTileGridController, type TileGridController } from './debug/tile-
 import { tileCountFromParams } from './tile-grid';
 import { TransitionCoordinator } from './transition/transition-coordinator';
 import { resolveGrabAnchor } from './transition/grab-anchor';
+import { createContentResolver } from './content/content-resolver';
 import type { MotionProfile } from './transition/types';
 
 declare global {
@@ -67,6 +68,9 @@ const transitionView = new DomTransitionView({
   fallback: app.listFocusFallback,
   renderDetail: app.renderDetail,
 });
+// Owns the network wait, the single-flight guard, and supersession. Deliberately
+// constructed outside the coordinator and never handed to it.
+const resolver = createContentResolver();
 const coordinator = new TransitionCoordinator(transitionView, {
   profile,
   selectMotionMode: () => (searchParams.has('fallback') ? 'fallback' : browserMotionMode()),
@@ -107,15 +111,76 @@ app.cardGrid.addEventListener('click', (event) => {
     return;
   }
 
+  void activate(event, trigger);
+});
+
+/**
+ * Resolve, then measure, then open.
+ *
+ * The order is the design's central decision made concrete. The network wait
+ * happens here, entirely outside the coordinator, so the state machine gains no
+ * long-lived `preparing` state, no new cancellation semantics, and no new failure
+ * mode. Measurement follows resolution with no round trip between it and `open()`,
+ * so the rects cannot go stale mid-prepare.
+ *
+ * Nothing is frozen or inert while the network works: the list stays scrollable
+ * and the other tiles stay usable, because `setBusy` and `freezeScroll` only run
+ * once `open()` is called.
+ */
+async function activate(event: MouseEvent, trigger: HTMLElement): Promise<void> {
+
+  // The trigger is a real <a>, so a modified or non-primary click belongs to the
+  // browser. Swallowing one is the classic way a transition breaks the browser:
+  // cmd-click stops opening a new tab, middle-click stops working, and the reader
+  // has no way to tell the page is at fault. Return *before* preventDefault so the
+  // native navigation proceeds untouched.
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+    return;
+  }
+
   const sourceId = trigger.dataset.sourceId;
   if (!sourceId) {
     reportCoordinatorFailure('open', new Error('Demo DOM contract is incomplete: card trigger missing data-source-id'));
     return;
   }
 
-  // Measurement and resolution both complete synchronously here, before the
-  // coordinator schedules the first animation frame, so no layout read is
-  // attributable to the frame loop and none happens again while the turn runs.
+  // From here the enhancement owns the click, so the browser must not also
+  // navigate to the href.
+  event.preventDefault();
+
+  const href = trigger.getAttribute('href') ?? '';
+  const outcome = await resolver.resolve(href);
+
+  if (outcome.kind === 'superseded') {
+    // A later activation took over. Do nothing at all — in particular do not fall
+    // through to navigation, or a click the reader already abandoned would take the
+    // page out from under the activation they are watching.
+    return;
+  }
+
+  if (outcome.kind === 'failed') {
+    // An ordinary outcome, not an exception. The tile is a real link, so the
+    // reader still gets the page; only the animation is lost. Nothing has been
+    // frozen or hidden at this point, so there is no state to unwind.
+    console.warn(`Paper-turn: ${outcome.reason} for ${href}; navigating instead.`, outcome.message);
+    window.location.assign(href);
+    return;
+  }
+
+  if (coordinator.state !== 'idle') {
+    // The resolution outran a transition that started meanwhile. Calling `open()`
+    // now would trip the coordinator's own state guard and throw.
+    return;
+  }
+
+  app.setPendingDetail({
+    sourceId,
+    fragment: outcome.fragment,
+    color: outcome.color,
+  });
+
+  // Measured after resolution and immediately before `open()`, so no layout read
+  // is attributable to the frame loop and none happens again while the turn runs.
   //
   // The anchor is derived from position alone: no element attribute, constant, or
   // runtime parameter can override it.
@@ -130,7 +195,7 @@ app.cardGrid.addEventListener('click', (event) => {
       trigger,
     }),
   );
-});
+}
 
 app.closeButton.addEventListener('click', () => {
   runCoordinatorAction('close', coordinator.close());

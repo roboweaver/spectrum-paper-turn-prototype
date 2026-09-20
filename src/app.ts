@@ -1,4 +1,4 @@
-import { cardById, cards, type CardRecord } from './data/cards';
+import { cards, type CardRecord } from './data/cards';
 import { resolveGrabAnchor } from './transition/grab-anchor';
 import type { Rect } from './transition/types';
 import {
@@ -14,14 +14,41 @@ export interface TileMeasurements {
   rects: Rect[];
 }
 
+/**
+ * Content resolved for one activation, handed to the view before
+ * `coordinator.open()` is called.
+ *
+ * This is how the fragment reaches the view without the coordinator learning
+ * about the network. `prepareDetail` stays synchronous and
+ * `TransitionView.prepareDetail(sourceId: string): void` keeps its signature; the
+ * content arrives out of band, already resolved.
+ */
+export interface PendingDetail {
+  /** The activation this content belongs to, so a mismatch is detectable. */
+  sourceId: string;
+  /** Inert until adopted. */
+  fragment: DocumentFragment;
+  /** Feeds `--detail-color`, from the page rather than from a local record. */
+  color: string;
+}
+
 export interface DemoApp {
   listSurface: HTMLElement;
   detailSurface: HTMLElement;
-  detailHeading: HTMLElement;
+  /**
+   * The adopted fragment's focus target, resolved lazily.
+   *
+   * Was a fixed element when the shell owned a five-field skeleton. It is now a
+   * different element after every adoption, so it cannot be captured once at
+   * construction.
+   */
+  detailHeading(): HTMLElement | null;
   listFocusFallback: HTMLElement;
   closeButton: HTMLElement;
   /** The tile grid itself, so activation can be delegated from one listener. */
   cardGrid: HTMLElement;
+  /** Stage the content for the next activation. Call before `coordinator.open()`. */
+  setPendingDetail(pending: PendingDetail | null): void;
   renderDetail(sourceId: string): void;
   resolveSource(sourceId: string): HTMLElement | null;
   measureTiles(): TileMeasurements;
@@ -38,11 +65,16 @@ function createCardItem(document: Document, card: CardRecord): HTMLLIElement {
   const item = document.createElement('li');
   item.className = 'card-grid-item';
 
-  const button = document.createElement('button');
+  // An anchor rather than a button, which is a correctness change independent of
+  // the transition: the index works before this script has loaded or if it fails,
+  // crawlers and assistive technology see a real navigable link, and cmd-click,
+  // middle-click, and "open in new tab" work natively. The delegated handler in
+  // main.ts is responsible for not swallowing those — see its modified-click guard.
+  const button = document.createElement('a');
   button.className = 'card-trigger';
   button.setAttribute('data-card-trigger', '');
   button.dataset.sourceId = card.id;
-  button.type = 'button';
+  button.href = card.url;
 
   const cardElement = document.createElement('sp-card');
   cardElement.setAttribute('heading', card.title);
@@ -118,17 +150,26 @@ export function createDemoApp(
           </header>
           <ul class="card-grid" data-list-focus-fallback data-anchor-labels="true" tabindex="-1" aria-label="Design topics"></ul>
         </section>
-        <article class="detail-surface" data-detail-surface hidden>
+        <!-- tabindex="-1" so focusDetailHeading has somewhere inside the surface to
+             land if an adopted fragment somehow arrives without its heading.
+             Programmatic focus on a non-input does not trigger :focus-visible and
+             the surface carries no :focus style, so this paints nothing. -->
+        <article class="detail-surface" data-detail-surface tabindex="-1" hidden>
           <div class="detail-toolbar">
             <sp-button data-close-button variant="secondary">Back to cards</sp-button>
           </div>
-          <div class="detail-content">
-            <p class="eyebrow" data-detail-subtitle></p>
-            <h2 data-detail-heading tabindex="-1"></h2>
-            <p data-detail-description></p>
-            <div class="detail-body" data-detail-body></div>
-            <p class="detail-footer" data-detail-footer></p>
-          </div>
+          <!-- The adoption target, and deliberately empty. Arbitrary pages cannot
+               be squeezed through five named string slots, so the shell owns the
+               toolbar and the fetched fragment owns the whole content region.
+               detail-content is itself the region rather than holding one, and that
+               is load-bearing. It is a column flex container, and detail-footer
+               pins itself to the bottom with margin: auto 0 0. Wrapping the
+               fragment in an extra element would make the footer a grandchild,
+               break that pin, and move the settled baseline -- so the fragment's
+               top-level nodes must be direct children here.
+               It also has to stay inside sp-theme, or themeTokenCss stops finding a
+               theme ancestor by closest() and the capture loses its tokens. -->
+          <div class="detail-content" data-detail-content></div>
         </article>
       </main>
     </sp-theme>
@@ -136,31 +177,18 @@ export function createDemoApp(
 
   const listSurface = root.querySelector<HTMLElement>('[data-list-surface]');
   const detailSurface = root.querySelector<HTMLElement>('[data-detail-surface]');
-  const detailHeading = root.querySelector<HTMLElement>('[data-detail-heading]');
+  const detailContent = root.querySelector<HTMLElement>('[data-detail-content]');
   const listFocusFallback = root.querySelector<HTMLElement>('[data-list-focus-fallback]');
   const closeButton = root.querySelector<HTMLElement>('[data-close-button]');
-  const detailSubtitle = root.querySelector<HTMLElement>('[data-detail-subtitle]');
-  const detailDescription = root.querySelector<HTMLElement>('[data-detail-description]');
-  const detailBody = root.querySelector<HTMLElement>('[data-detail-body]');
-  const detailFooter = root.querySelector<HTMLElement>('[data-detail-footer]');
 
-  if (
-    !listSurface ||
-    !detailSurface ||
-    !detailHeading ||
-    !listFocusFallback ||
-    !closeButton ||
-    !detailSubtitle ||
-    !detailDescription ||
-    !detailBody ||
-    !detailFooter
-  ) {
+  if (!listSurface || !detailSurface || !detailContent || !listFocusFallback || !closeButton) {
     throw new Error('Demo DOM contract is incomplete');
   }
 
   const document = root.ownerDocument;
   const cardGrid = listFocusFallback;
   let renderedCount = 0;
+  let pendingDetail: PendingDetail | null = null;
 
   /**
    * Measure every tile in the grid, in document order, so the activated tile's
@@ -224,28 +252,38 @@ export function createDemoApp(
   return {
     listSurface,
     detailSurface,
-    detailHeading,
+    detailHeading() {
+      return detailContent.querySelector<HTMLElement>('[data-detail-heading]');
+    },
     listFocusFallback,
     closeButton,
     cardGrid,
+    setPendingDetail(pending: PendingDetail | null) {
+      pendingDetail = pending;
+    },
     renderDetail(sourceId: string) {
-      const card = cardById(sourceId);
-      detailHeading.textContent = card.title;
-      detailSubtitle.textContent = card.subtitle;
-      detailDescription.textContent = card.description;
-      detailFooter.textContent = card.footer;
-      detailBody.replaceChildren(
-        ...card.sections.map((section) => {
-          const wrapper = document.createElement('section');
-          const heading = document.createElement('h3');
-          heading.textContent = section.heading;
-          const body = document.createElement('p');
-          body.textContent = section.body;
-          wrapper.append(heading, body);
-          return wrapper;
-        }),
-      );
-      detailSurface.style.setProperty('--detail-color', card.color);
+      if (!pendingDetail) {
+        throw new Error(
+          `No content staged for "${sourceId}". Resolve it and call setPendingDetail before opening.`,
+        );
+      }
+
+      if (pendingDetail.sourceId !== sourceId) {
+        // A mismatch means the wrong page's content is about to be printed onto
+        // the sheet, which is exactly the silent-wrong-content failure the
+        // fragment contract works to avoid. Throwing routes through the
+        // coordinator's existing open-setup recovery and the fallback transition,
+        // so the page still opens.
+        throw new Error(
+          `Staged content is for "${pendingDetail.sourceId}" but "${sourceId}" is opening.`,
+        );
+      }
+
+      // Deep copy, so the resolver's fragment survives for a retry and the
+      // adopted nodes are ours. `replaceChildren` clears the previous adoption
+      // entirely, leaving none of it behind.
+      detailContent.replaceChildren(document.importNode(pendingDetail.fragment, true));
+      detailSurface.style.setProperty('--detail-color', pendingDetail.color);
     },
     resolveSource(sourceId: string) {
       return Array.from(root.querySelectorAll<HTMLElement>('[data-card-trigger]')).find((element) => element.dataset.sourceId === sourceId) ?? null;

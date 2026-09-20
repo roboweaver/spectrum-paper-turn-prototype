@@ -187,8 +187,8 @@ it.
 - [x] 5. Checkpoint - resolver complete
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 6. Replace the five-field skeleton with one adopted region
-  - [ ] 6.1 Collapse the detail skeleton in `src/app.ts` to a single content region
+- [x] 6. Replace the five-field skeleton with one adopted region
+  - [x] 6.1 Collapse the detail skeleton in `src/app.ts` to a single content region
     - Replace the five `[data-detail-subtitle]`, `[data-detail-heading]`,
       `[data-detail-description]`, `[data-detail-body]`, `[data-detail-footer]` children
       of `.detail-content` with one empty adoptable region
@@ -202,7 +202,7 @@ it.
       baseline is sensitive to both
     - _Requirements: 4.1, 4.2, 4.4_
 
-  - [ ] 6.2 Replace `renderDetail(sourceId)` with fragment adoption
+  - [x] 6.2 Replace `renderDetail(sourceId)` with fragment adoption
     - Add a setter on the view for the resolved fragment, called before
       `coordinator.open()`, and have the view's detail rendering adopt that fragment with
       `document.importNode(fragment, true)`
@@ -218,14 +218,14 @@ it.
       detail path; the tile face still reads the record
     - _Requirements: 4.3, 4.6, 3.4, 1.3, 9.1_
 
-  - [ ] 6.3 Move the settle focus target into the adopted fragment
+  - [x] 6.3 Move the settle focus target into the adopted fragment
     - Have the settle step focus the adopted fragment's `[data-detail-heading]`, which the
       extractor has already guaranteed to exist exactly once
     - Verify the existing keyboard open/close focus-restoration behaviour is preserved,
       since `[data-detail-heading]` is no longer a fixed shell element
     - _Requirements: 4.5, 3.3_
 
-  - [ ] 6.4 Update the view suites
+  - [x] 6.4 Update the view suites
     - Update `tests/unit/app.test.ts` and `tests/unit/dom-transition-view.test.ts` for the
       collapsed skeleton and the adoption path, replacing assertions that read the five
       detail fields
@@ -234,8 +234,8 @@ it.
       adopted region
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.6_
 
-- [ ] 7. Make tiles real anchors
-  - [ ] 7.1 Build the tile trigger as an `<a>` in `src/app.ts`
+- [x] 7. Make tiles real anchors
+  - [x] 7.1 Build the tile trigger as an `<a>` in `src/app.ts`
     - Change `createCardItem`'s trigger from `<button type="button">` to
       `<a href="{card.url}">`, keeping `[data-card-trigger]`, the `card-trigger` class,
       and the `data-source-id` dataset entry
@@ -249,7 +249,7 @@ it.
       `<button>`
     - _Requirements: 5.1, 5.2, 5.6, 12.1_
 
-  - [ ] 7.2 Add the modified-click guard in `src/main.ts`
+  - [x] 7.2 Add the modified-click guard in `src/main.ts`
     - In the delegated `click` handler, return without `preventDefault()`, without
       resolving, and without opening when `metaKey`, `ctrlKey`, `shiftKey`, or `altKey` is
       set, or when `button !== 0`
@@ -259,7 +259,7 @@ it.
       this guard is load-bearing rather than defensive
     - _Requirements: 5.3, 5.4, 5.5_
 
-  - [ ] 7.3 Test the anchor change in the unit and interaction suites
+  - [x] 7.3 Test the anchor change in the unit and interaction suites
     - Unit: the trigger is an `<a>` with the record's `href`, the label is a sibling, and
       `tests/unit/tile-grid.test.ts` still passes for every tile count
     - Interaction: a cmd-click, a ctrl-click, a shift-click, and a middle-click each leave
@@ -270,7 +270,7 @@ it.
       enhancement claim made concrete
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 8. Checkpoint - adoption and anchors complete
+- [x] 8. Checkpoint - adoption and anchors complete
   - Ensure all tests pass, ask the user if questions arise. Run
     `npm run test:visual` here specifically: this is the first point at which the twelve
     committed images could have moved, and finding that now is much cheaper than after
@@ -308,7 +308,7 @@ it.
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 8.4, 8.5, 8.6_
 
 - [ ] 10. Rewire the activation path
-  - [ ] 10.1 Resolve, then measure, then open in `src/main.ts`
+  - [x] 10.1 Resolve, then measure, then open in `src/main.ts`
     - In the delegated handler: guard the click (task 7.2), `preventDefault()`, resolve
       the trigger's URL, and only on success measure tiles, resolve the grab anchor, hand
       the fragment to the view, await capture readiness, and call `coordinator.open()`
@@ -321,7 +321,7 @@ it.
       provoking its state guard to throw
     - _Requirements: 1.1, 1.2, 1.4, 1.5, 1.6, 2.3, 2.4, 2.6_
 
-  - [ ] 10.2 Fall through to navigation on every resolution failure
+  - [x] 10.2 Fall through to navigation on every resolution failure
     - On a non-OK response, a request failure, or an extraction failure, perform an
       ordinary navigation to the trigger's `href`
     - Leave the list scrollable and not inert, the detail surface hidden, and the
@@ -443,6 +443,23 @@ it.
   Realism in the contract tests must not be paid for in baselines.
 - No new dependency. `fetch`, `DOMParser`, and a Node script are the whole toolkit.
 
+### Correction to the wave order
+
+**Tasks 10.1 and 10.2 were pulled forward to run with task 7, before task 9.** The
+dependency graph had them at wave 11–12, after capture readiness. That was wrong,
+and checkpoint 8 is what exposed it.
+
+Task 6.2 makes adoption mandatory — `renderDetail` throws when nothing is staged —
+while task 10.1 is what stages it. Split across waves, the app cannot open a detail
+surface at all in between, so checkpoint 8's instruction to run the visual suite
+"here specifically" could not be carried out: both frames failed at
+`advanceClockUntilOverlayStarts`, because the turn never began. Adoption and staging
+are two halves of one change and belong in the same wave.
+
+Task 9 was the thing safe to defer. Awaiting fonts and image decode improves the
+fidelity of a path that already works; it is not a prerequisite for the path
+existing. The corrected order is 6 → 7 → 10.1/10.2 → 9 → 10.3.
+
 ### Learned during execution
 
 Recorded here because each one constrains a task that has not run yet.
@@ -495,9 +512,9 @@ Recorded here because each one constrains a task that has not run yet.
     { "id": 7, "tasks": ["6.2", "7.1"] },
     { "id": 8, "tasks": ["6.3", "7.2"] },
     { "id": 9, "tasks": ["6.4", "7.3"] },
-    { "id": 10, "tasks": ["9.1", "9.2"] },
-    { "id": 11, "tasks": ["9.3", "10.1"] },
-    { "id": 12, "tasks": ["10.2"] },
+    { "id": 10, "tasks": ["10.1", "10.2"] },
+    { "id": 11, "tasks": ["9.1", "9.2"] },
+    { "id": 12, "tasks": ["9.3"] },
     { "id": 13, "tasks": ["10.3"] },
     { "id": 14, "tasks": ["12.1", "12.2", "12.3"] },
     { "id": 15, "tasks": ["13.1"] },
