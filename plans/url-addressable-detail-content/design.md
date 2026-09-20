@@ -1,7 +1,12 @@
 # Design Document: URL-addressable detail content
 
-**Status:** Proposed — not yet approved. `requirements.md` and `tasks.md` are
-derived from this document once it is, per the repo's design-first workflow.
+**Status:** Approved. [`requirements.md`](./requirements.md) is derived from this
+document and covers **Phase 1 only**; `tasks.md` follows from it. Open questions
+1–4 and 7–9 are answered below. Questions 5 and 6 remain open and gate Phase 5
+rather than Phase 1.
+
+One scope change was made at approval: **navigation on settle moved from Phase 1
+to Phase 3.** See [Phasing](#phasing) for why.
 **Branch:** `url-addressable-detail-content`
 **Supersedes nothing.** Extends [`docs/architecture.md`](../../docs/architecture.md);
 the geometry, renderer, and coordinator contracts described there are preserved.
@@ -108,7 +113,10 @@ click ─▶ ContentResolver.resolve(url) ────────────�
                                                  │
                                                  ├─ prepareDetail  (sync, as today)
                                                  ├─ capture × 2
-                                                 └─ animate ─▶ settleOpen ─▶ pushState
+                                                 └─ animate ─▶ settleOpen
+                                                                 │
+                                                                 └─ pushState, then
+                                                                    navigate  (Phase 3)
 ```
 
 What this buys:
@@ -209,8 +217,7 @@ cache hit and a synchronous resolve, and click-to-animate returns to its current
 latency. This is what makes the feature feel native rather than merely correct.
 
 **2. A latency budget with a fallback commit.** If the fragment is not ready
-within a budget (~120 ms is a reasonable starting value; it is a tunable, so it
-belongs in `MotionProfile` alongside the other timings), stop waiting for the
+within a budget (~120 ms is a reasonable starting value), stop waiting for the
 full turn and commit to the **existing** fallback transition — the coordinator
 already has `runFallbackTo` and a `fallback` motion mode, and
 `selectMotionMode()` is already an injected dependency. A slow page degrades to
@@ -227,6 +234,15 @@ browser navigation to the href. The link still works; the enhancement simply
 does not apply. That is the correct degradation for a feature layered on real
 navigation, and it is why the tiles being real anchors is load-bearing rather
 than cosmetic.
+
+**Resolved: the budget does not live in `MotionProfile`.** It is a timing and a
+tunable, which argued for putting it there, but `MotionProfile` is constructed as
+a literal by four test suites and `docs/architecture.md` records that widening it
+is a deliberate cost. The resolver's tunables — the latency budget, the
+capture-readiness bound, the cache policy — go in a separate `ResolverConfig`
+instead. That keeps this feature's blast radius off the motion contract entirely,
+and the two objects have different owners in practice: a designer tunes motion, an
+engineer tunes network behaviour.
 
 ---
 
@@ -343,6 +359,45 @@ not run `<script>` elements. So adoption does not execute page scripts, which
 means any detail page that *depends* on its own scripts for content will render
 inert when adopted. That is a real functional limit of the transition path, not
 a bug: such a page should fall through to normal navigation.
+
+**Correction, and it matters more than the sentence above implies.** "Adoption
+does not execute page scripts" is true of `<script>` elements specifically and is
+narrower than it reads. Inline event-handler attributes *do* fire once the nodes
+are live in the document — `<img src=x onerror="…">` executes on insertion. So
+the inertness of the parsed document is a property of the *parse*, not of the
+adoption, and it cannot be leaned on as a general safety guarantee. It does not
+change the Phase 1 position below, but Phase 4 must not carry the stronger
+reading into WordPress.
+
+### Resolved: no sanitiser, and the assumption that licenses it
+
+**Decision: adopt faithfully, do not sanitise.** The goal is that the reverse face
+be the real page, so rewriting the markup defeats the feature. The trust
+assumption that makes this sound is narrower than "same-origin", and is worth
+stating precisely:
+
+> Adoption is safe where the detail page's content is no less trusted than the
+> page performing the adoption.
+
+A WordPress post body is authored outside *this project* but inside *the host
+site*, and the destination page already renders it on ordinary navigation. So
+adopting it into the index page adds no exposure that the site did not already
+have. The assumption fails in exactly one shape: where the adopting page holds
+privileges the detail page's authors do not — a component embedded in an admin
+screen while posts come from lower-trust contributors. Then an `onerror` in a post
+body runs with the admin session attached. That deployment needs a sanitisation
+layer, and it is out of scope here.
+
+Two things narrow the exposure further, and only the first applies in Phase 1:
+
+- The adopted fragment is never interactive in the sense that matters — Phase 1
+  adopts it as the destination, but no page script runs, so the surface is markup
+  and CSS.
+- **From Phase 3 the fragment exists only to be photographed.** It lives for one
+  animation duration and is then replaced by a real navigation. Hostile markup
+  gets a window of one turn rather than a live page. Not zero — an `onerror` still
+  fires during the capture — but a much smaller blast radius than Phase 1's, which
+  is a further reason the phases are ordered this way.
 
 ---
 
@@ -676,12 +731,44 @@ later ones are each independently valuable.
 | --- | --- | --- |
 | **1** | `ContentResolver`, fragment contract, `CardRecord.url`, tiles as anchors, generic detail region, `renderDetail` adopts a fragment, fonts/images awaited before capture, failure falls through to navigation | A working URL-backed turn, transition subsystem untouched |
 | **2** | Prefetch on hover/focus/touch, fragment cache, latency budget, fallback commit on slow resolve, pending affordance | The turn feels native rather than merely correct |
-| **3** | `pushState`/`popstate`, deep linking, query-param carry-over. *Not* standalone page rendering — the host already serves real pages. | Real navigation |
+| **3** | `pushState`/`popstate`, deep linking, query-param carry-over, **navigation on settle**, and what the reverse turn means once a real navigation has replaced the document. *Not* standalone page rendering — the host already serves real pages. | Real navigation, on real pages |
 | **4** | **Component packaging.** Generalise token inlining beyond `--spectrum`, scope or shadow the CSS, top-layer surface, dynamic Three import, guarded element registration, adopt host tiles instead of rendering them, overridable scroll freeze | Embeddable in Grimoire, WordPress, OPA |
 | **5** | `PaperTurnPage` init contract, pre-init during prefetch, capture-after-ready sequencing, preview escape hatch, nav grid layout policy, raised tile ceiling, retuned duration. **Spans two repos** — OmnisTools implements the contract and a per-route partial render mode. | Usable as OmnisTools navigation |
 | **6** | Cross-origin taint logging, capture-cost telemetry, authoring lint for the fragment contract | Operability |
 
 **This branch is Phase 1.** Phases 2–6 get their own branches and their own PRs.
+
+### Why navigation on settle is Phase 3 and not Phase 1
+
+The end goal is the full turn onto real pages, and a turn that lands on adopted
+DOM only reaches that goal for pages with no script dependency. So the instinct is
+to put "navigate to the real URL once the turn settles" in Phase 1 and have the
+mechanism be honest from the start. Two things say otherwise.
+
+**Phase 1 is not dead without it.** Its destinations are the pages the
+Detail_Page_Generator emits from `cards.ts` — the five-field skeleton, plain text,
+no scripts. Adopted, those are completely live, because there is nothing to
+hydrate. Phase 1 demonstrates end to end with no navigation at all. The inertness
+problem is a property of *foreign script-dependent* pages, which Phase 1 does not
+have by construction.
+
+**Navigating on settle destroys the reverse turn, and repairing it is history
+work.** `close()` is fully built: `runTransition('close')`, a `closing` state, the
+close button and Escape both wired in `main.ts`, and both faces captured in one
+pass specifically so the reverse pays for no second capture. Navigate away on
+settle and none of that survives — the document is replaced, the coordinator
+instance is gone, and "close" degrades into a back-navigation to a freshly loaded
+index that must re-measure from scratch. Reconstructing a reverse turn across a
+document boundary is real design work, and it is the same subject as
+`pushState`/`popstate`: what the history entries are, what Back means mid-turn,
+and what the close affordance does once it is a navigation. Doing it in Phase 1
+means doing that thinking twice.
+
+Keeping them together also clarifies the fragment contract. In Phase 1 the adopted
+fragment *is* the destination. From Phase 3 it exists only to be photographed —
+one animation duration, then a real page load replaces it. That is a narrower
+obligation (pixels only, never interactive, never needs to survive), and it is
+easier to specify once than to specify one way and then loosen.
 
 Phase 4 is the largest and is gated on the host stacks. Grimoire is Go with
 server-rendered templates under `themes/` and a separate React admin SPA, so its
@@ -750,16 +837,40 @@ any of them should be settled unilaterally:
 6. **Which routes fetch their own data after init, and how slow are they?** This
    sets the pre-init prefetch budget, and decides which routes can realistically
    be capture-ready by click time.
-7. **Is any detail-page content user-authored?** Decides whether a sanitisation
-   layer is in scope at all. Near-certainly *yes* for WordPress, which makes the
-   host the security boundary.
-8. **Is the 16-record demo index kept** as a fixture alongside real content, or
-   replaced? It is what every visual baseline and the tile-count control are
-   written against, so replacing it is a larger change than it looks.
-9. **Does the latency budget belong in `MotionProfile`?** It is a timing and a
-   designer-tunable, which argues yes; but `MotionProfile` is constructed as a
-   literal by four test suites, and `docs/architecture.md` records that widening
-   it is a deliberate cost. A separate resolver config may be cleaner.
+7. ~~**Is any detail-page content user-authored?**~~ **Answered: yes, and it is
+   adopted unchanged — no sanitiser.** The goal is that the reverse face be the
+   real page, so rewriting the markup defeats the feature. What makes this sound
+   is a stated assumption rather than the origin: the detail page's content must be
+   no less trusted than the page adopting it. See
+   [Resolved: no sanitiser](#resolved-no-sanitiser-and-the-assumption-that-licenses-it),
+   which also records the one deployment shape that breaks the assumption and the
+   correction to the `importNode` safety claim.
+8. ~~**Is the 16-record demo index kept?**~~ **Answered: kept in full, and it
+   generates the detail pages.** All sixteen stay — `MAX_TILE_COUNT` is 16 and the
+   four-by-four is what reaches all eight grab anchors, so dropping below it would
+   discard coverage two merged PRs established. Each record gains a `url`, and a
+   build-time generator emits one page per record.
+
+   The cost here was never proxying — same-origin settled that. It is baselines:
+   five of the six frames carry *captured detail content* (`peak-curl`,
+   `diagonal-midpoint`, `settled`, `midline-peak-curl`, `midline-midpoint`), and
+   only `paper-turn-start` is grid-only. So generating the pages from the same
+   `cards.ts` with the same markup `renderDetail` emits today is what lets Phase 1
+   change where the DOM comes from without changing the DOM. Hand-authored files
+   would drift from the records and the drift would surface as a ten-image,
+   two-platform baseline review. Realism is bought separately, with a few
+   deliberately messy fixtures that no visual spec touches.
+9. ~~**Does the latency budget belong in `MotionProfile`?**~~ **Answered: no, a
+   separate `ResolverConfig`.** See
+   [Latency](#latency-and-what-the-user-sees-while-waiting). Keeps the motion
+   contract untouched and the four test suites that build a `MotionProfile` literal
+   compiling unmodified.
+
+### Still open, and gating Phase 5 rather than Phase 1
+
+Questions 5 and 6 need access to the OmnisTools source and constrain the init
+contract, not the resolver. They are recorded here and carried into the Phase 5
+spec; Phase 1 neither answers nor depends on them.
 
 ---
 
@@ -779,3 +890,13 @@ any of them should be settled unilaterally:
   accepted risk that degrades to the fallback, and logged so it is diagnosable.
 - No component packaging in phase 1. The mechanism is proven in the prototype's
   own page first; phase 4 makes it embeddable.
+- **No navigation on settle in phase 1.** Moved to phase 3, with the history work
+  and the reverse-turn question it is inseparable from. See
+  [Why navigation on settle is Phase 3](#why-navigation-on-settle-is-phase-3-and-not-phase-1).
+- **No validation against a page this repo did not author.** Every page Phase 1
+  fetches is emitted from the same records the tiles are built from. The messy
+  fixtures probe the contract's edges deliberately, but they are still fixtures.
+  Whether foreign markup captures faithfully stays unproven until a real host
+  serves the pages, and closing that gap needs a same-origin real page the
+  prototype has no server to provide. Recorded as a known gap rather than
+  something Phase 1 pretends to cover.
