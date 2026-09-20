@@ -111,7 +111,12 @@ it.
     - Return a failure rather than throwing for every contract violation, so the
       activation path treats it as an ordinary outcome
     - Pure: no network access, no live-document mutation, equal output for equal input
-    - _Requirements: 3.1, 3.2, 3.3, 3.5, 3.6, 3.7_
+    - When more than one region is marked, take the first in document order and log it
+      distinguishably rather than failing. The asymmetry with the heading rule is
+      deliberate: document order is a defensible default and its consequence is visible
+      content, where a second heading has neither. Warning also keeps the enhancement
+      available on hosts where a duplicated detail partial is routine
+    - _Requirements: 3.1, 3.2, 3.3, 3.5, 3.6, 3.7, 3.9_
 
   - [x] 2.2 Unit-test extraction in `tests/unit/fragment.test.ts`
     - Well-formed: the generated pages from task 1.2 all extract successfully, and the
@@ -124,7 +129,11 @@ it.
     - Assert the extractor mutates neither the input string nor the live document, and
       that the awkward fixtures from task 1.4 extract successfully, including the one
       carrying an inline handler attribute, which is adopted unchanged by design
-    - _Requirements: 3.1, 3.2, 3.3, 3.6, 3.7, 10.1_
+    - Two marked regions: the first in document order is adopted, extraction succeeds,
+      and the warning names the count. Assert no warning for a conforming single-region
+      page, and none when a single region is unusable, so ambiguity and invalidity stay
+      distinct signals
+    - _Requirements: 3.1, 3.2, 3.3, 3.6, 3.7, 3.9, 10.1_
 
 - [x] 3. Checkpoint - pages and extraction complete
   - Ensure all tests pass, ask the user if questions arise.

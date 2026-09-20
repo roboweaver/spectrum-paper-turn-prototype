@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderDetailPage } from '../../scripts/generate-detail-pages';
 import {
   DEFAULT_DETAIL_COLOR,
@@ -73,6 +73,54 @@ describe('extractFragment', () => {
 
       expect(result.color).toBe('#bd6100');
       expect(result.title).toBe('A page with real content in it');
+    });
+  });
+
+  describe('more than one marked region', () => {
+    it('adopts the first in document order and warns, rather than failing', () => {
+      const report = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const result = expectOk(fixture('two-regions.html'));
+
+      // Document order, which in this fixture is the sidebar widget's copy — not
+      // the article the page is actually for. That is precisely the mistake the
+      // warning exists to surface: the sheet shows "Workflow patterns" while the
+      // page's own title is "Spectrum foundations".
+      expect(result.fragment.querySelector('[data-detail-heading]')?.textContent).toBe(
+        'Workflow patterns',
+      );
+      expect(result.color).toBe('#d83790');
+      expect(result.title).toBe('Spectrum foundations');
+
+      expect(report).toHaveBeenCalledTimes(1);
+      const message = String(report.mock.calls[0]?.[0] ?? '');
+      expect(message).toContain('Paper-turn');
+      expect(message).toContain('2');
+      expect(message).toContain('data-paper-turn-detail');
+      expect(message).toContain('first in document order');
+    });
+
+    it('stays silent for a conforming page with exactly one region', () => {
+      const report = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      expectOk(fixture('minimal.html'));
+      expectOk(fixture('rich-content.html'));
+      for (const card of cards) {
+        expectOk(renderDetailPage(card), card.id);
+      }
+
+      expect(report).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when the single region is unusable', () => {
+      // The warning is about ambiguity, not about validity. A page with one bad
+      // region gets a failure and no warning, so the two signals stay distinct.
+      const report = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      expect(extractFragment(fixture('no-heading.html')).ok).toBe(false);
+      expect(extractFragment(fixture('region-not-template.html')).ok).toBe(false);
+      expect(extractFragment(fixture('no-region.html')).ok).toBe(false);
+
+      expect(report).not.toHaveBeenCalled();
     });
   });
 

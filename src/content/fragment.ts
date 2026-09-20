@@ -83,10 +83,30 @@ function fail(reason: FragmentFailureReason, message: string): FragmentFailure {
 export function extractFragment(html: string): FragmentResult {
   const parsed = new DOMParser().parseFromString(html, 'text/html');
 
-  // `querySelector` takes the first match. A page marking two regions gets its
-  // first one rather than an error, which is the literal reading of the contract
-  // and a candidate for the Phase 6 authoring lint rather than a runtime failure.
-  const region = parsed.querySelector(DETAIL_REGION_SELECTOR);
+  const regions = parsed.querySelectorAll(DETAIL_REGION_SELECTOR);
+  const region = regions[0];
+
+  // A page marking more than one region takes the first in document order, and
+  // says so. The contract asks for one; more than one is an authoring mistake with
+  // a defensible default, not an unrecoverable state.
+  //
+  // Warning rather than failing is the same call the design made for cross-origin
+  // tainted captures: do not mitigate, do not refuse, make it diagnosable. What
+  // makes silence the wrong choice here is how the mistake presents. A duplicated
+  // detail partial — a sidebar widget rendering the same template as the article —
+  // puts the sidebar's copy first, so the sheet shows one page's content while the
+  // URL is another's. That reads as a bug in the geometry or the renderer, and
+  // sends the reader hunting somewhere the fault is not.
+  //
+  // Contrast `ambiguous-heading` below, which fails. Two headings has no defensible
+  // default: focus must land somewhere, picking one is arbitrary, and the cost
+  // falls on assistive technology while the page still looks correct to its author.
+  // Here the consequence is visible content, which self-reports to anyone looking.
+  if (regions.length > 1) {
+    console.warn(
+      `Paper-turn: page marks ${regions.length} ${DETAIL_REGION_SELECTOR} regions; adopting the first in document order. The contract expects exactly one, so the sheet may show content from the wrong region.`,
+    );
+  }
 
   if (!region) {
     return fail(

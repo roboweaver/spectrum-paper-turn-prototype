@@ -177,6 +177,17 @@ without reading the transition's source.
    requirement that Spectrum component text be slotted rather than attribute-only, and
    the guidance that images used on turnable pages be served same-origin or with
    `crossorigin`.
+9. WHERE a page carries more than one `[data-paper-turn-detail]` region, THE
+   Fragment_Extractor SHALL select the first in document order, SHALL report an
+   extraction success, and SHALL log that selection distinguishably, naming the number
+   of regions found. This is a deliberate asymmetry with criterion 3 and is not to be
+   tightened into a failure without revisiting it: more than one region has a defensible
+   default in document order and a visible consequence, whereas more than one heading has
+   neither. Warning rather than refusing also keeps the enhancement available on hosts
+   where a duplicated detail partial is routine, and the stricter rule belongs in the
+   Phase 6 authoring lint. THE Fragment_Extractor SHALL NOT log that warning when exactly
+   one region is present, whether or not that region is usable, so that ambiguity and
+   invalidity stay distinguishable signals.
 
 ### Requirement 4: Fragment adoption replaces the five-field skeleton
 
