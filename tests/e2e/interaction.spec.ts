@@ -939,3 +939,48 @@ test('the adopted detail content is the fetched page, not a local record', async
     ),
   ).toBe('#00a0a0');
 });
+
+test('closing restores the scroll position the turn was opened from', async ({ page }) => {
+  // Characterises current behaviour before Phase 3 adds history entries, because that
+  // is the thing most likely to disturb it: a real `popstate` brings the browser's own
+  // scroll restoration, which could fight `restoreScroll`.
+  //
+  // A spike confirmed it does not — drift was zero with `scrollRestoration` left at
+  // `auto` and at `manual`, since `freezeScroll` pins the body with `position: fixed`
+  // so the document never actually scrolls during the turn. This test is what would
+  // catch that conclusion being wrong later.
+  //
+  // `dispatchEvent` rather than `click` throughout: Playwright's click scrolls the
+  // target into view first, which moves the page *before* `freezeScroll` records a
+  // position and shows up as phantom drift.
+  await page.setViewportSize({ width: 1000, height: 500 });
+  await page.goto('/?tiles=16&duration=120');
+  await page.locator('[data-card-trigger]').nth(8).waitFor();
+
+  await page.evaluate(() => window.scrollTo(0, 400));
+  await expect.poll(async () => page.evaluate(() => Math.round(window.scrollY))).toBe(400);
+
+  await page.locator('[data-card-trigger]').nth(8).dispatchEvent('click');
+
+  // Waiting on the coordinator's own state, not on visibility: `open()` makes the
+  // surface visible early while it is still clipped to a point and the state is
+  // `opening`, so a visibility wait followed by a close throws.
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __paperTurn?: { coordinator: { state: string } } }).__paperTurn
+            ?.coordinator.state,
+      ),
+    )
+    .toBe('open');
+
+  // The body is pinned while open, so the document reports no scroll of its own.
+  expect(await page.evaluate(() => document.body.style.position)).toBe('fixed');
+
+  await page.locator('[data-close-button]').dispatchEvent('click');
+  await expect(detailSurface(page)).toBeHidden();
+
+  expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(400);
+  expect(await page.evaluate(() => document.body.style.position)).toBe('');
+});
