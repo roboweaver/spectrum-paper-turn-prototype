@@ -1,7 +1,10 @@
 # Design Document: Prefetch and the latency budget
 
-**Status:** Proposed — not yet approved. `requirements.md` and `tasks.md` are derived
-from this document once it is, per the repo's design-first workflow.
+**Status:** Proposed — not yet approved. Of the four open questions, one is answered,
+one is retired, one is split so that only a follow-up measurement remains, and **one is
+still open: the pending affordance's visual design**, which is the single thing gating
+requirements. `requirements.md` and `tasks.md` are derived from this document once it is
+approved, per the repo's design-first workflow.
 
 **Branch:** `phase-2-prefetch-and-latency`
 
@@ -184,6 +187,24 @@ self-inflicted load test. Hover is a strong signal; visibility is not.
 **No prefetch on `mousedown`.** It sounds like a free 50 ms, but it fires for
 click-and-drag, text selection, and middle-click, none of which are activations.
 
+### Metered connections
+
+`warm` is skipped when `navigator.connection.saveData` is true, and no other connection
+signal is consulted.
+
+The distinction that decides this: **`saveData` is a stated user preference**, so
+honouring it is unambiguous and costs three lines. **`effectiveType` is a speed signal**,
+and speed cuts both ways for prefetch — a slow connection is where warming helps most
+*and* where a wasted request hurts most. There is no principled line to draw there, so
+the design does not pretend to draw one.
+
+Two things the requirement must state plainly rather than imply. `saveData` is
+Chromium-only — absent in Safari and Firefox — so this is a best-effort courtesy and not
+a guarantee; a requirement asserting that prefetch never happens on a metered connection
+would be false on most browsers. And the cost being avoided is genuinely small: one HTML
+document per hover, a few kilobytes for these pages. That is an argument for keeping the
+check to a guard clause and not building a policy layer around it.
+
 ---
 
 ## The latency budget
@@ -276,7 +297,7 @@ The existing layering holds.
 
 | Layer | Adds |
 | --- | --- |
-| Unit | `warm` does not take the activation token — the load-bearing test. Cache hit, miss, LRU eviction, age expiry, entry drop after a downstream failure. Budget elapsing sets the fallback flag; the flag clears on settle. |
+| Unit | `warm` does not take the activation token — the load-bearing test. Cache hit, miss, LRU eviction, age expiry, entry drop after a downstream failure. Budget elapsing sets the fallback flag; the flag clears on settle. `warm` is skipped when `saveData` is true, and behaves normally when the connection API is absent entirely. |
 | Interaction | Hover then click issues **one** request. Hover over a second tile during a pending activation does not swallow the first click. A slow resolve takes the fallback transition and still opens. The pending affordance appears on a cold activation and never on a warm one. |
 | Visual | **No new baselines.** The pending affordance must not move layout, which is what makes that achievable. |
 
@@ -306,15 +327,23 @@ not respond.
 
 ## Open questions
 
-1. **Is the ~120 ms budget right?** It is inherited as a suggestion and has never been
-   measured. It needs a throttled-connection test against a real host, and the answer
-   may well be that it should differ between pointer and touch.
+1. ~~**Is the ~120 ms budget right?**~~ **Split, and no longer blocking.** The
+   *mechanism* needs no answer — the budget exists, it is configurable, and it commits to
+   the fallback when it elapses — so requirements are written against the mechanism and
+   `~120 ms` ships as a documented default. Only the *value* wants measuring, against a
+   throttled connection and a real host, and that can happen after this phase is built.
+   The suspicion that it should differ between pointer and touch survives as a thing to
+   look for in the data rather than a decision to make now.
 2. **What should the pending affordance actually look like?** The constraints above
    rule out a lot — no layout movement, nothing on the fast path — but do not pick
    one. This is a design question, not an engineering one.
-3. **Should `warm` be disabled under a data-saving or metered-connection signal?**
-   `navigator.connection.saveData` exists and is unevenly supported. Prefetching
-   sixteen pages to use one is defensible on a desktop and rude on a metered phone.
-4. **Does the age cap need to be per-route rather than global?** A dashboard page goes
-   stale in seconds; an article does not. A single global cap is simpler and may be
-   wrong for the OmnisTools case in Phase 5.
+3. ~~**Should `warm` be disabled under a data-saving or metered-connection signal?**~~
+   **Answered: respect `saveData`, ignore `effectiveType`.** See
+   [Metered connections](#metered-connections).
+4. ~~**Does the age cap need to be per-route rather than global?**~~ **Retired rather
+   than answered.** The choice has no consequence for the Phase 2 *mechanism*: a global
+   cap and a per-route cap differ only in where the number comes from. A single global
+   cap ships in `ResolverConfig`, the requirement is written against the mechanism, and
+   Phase 5 adds per-route overrides if OmnisTools turns out to need them. Cheap to
+   reverse, and it unblocks now. A dashboard going stale in seconds is a real need; it is
+   also not this phase's need.
