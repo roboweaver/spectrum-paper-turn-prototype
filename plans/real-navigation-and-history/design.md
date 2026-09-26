@@ -1,7 +1,8 @@
 # Design Document: Real navigation and history
 
-**Status:** Proposed — not yet approved. `requirements.md` and `tasks.md` are derived
-from this document once it is, per the repo's design-first workflow.
+**Status:** Proposed — not yet approved, but **all four open questions are now
+answered**: two by spike and two by decision. `requirements.md` and `tasks.md` are
+derived from this document once it is approved, per the repo's design-first workflow.
 
 **Branch:** `phase-3-real-navigation`
 
@@ -179,6 +180,64 @@ adopted-detail. The DOM differs, the close button is gone, and Back leaves the s
 That is not a bug to fix; it is what a real URL means. The alternative is a URL that
 does not survive a reload, which is the thing this phase exists to remove.
 
+**The same consequence has a second shape**, found while settling open question 2. If
+the reader follows a link *inside* the adopted content to somewhere else and then
+presses Back, they land on the standalone detail page rather than the shell they were
+looking at. Same content, no close button. It is the reload caveat arriving by a
+different route, and it has the same answer.
+
+Back itself needs no special handling beyond that. A reader who arrives by deep link,
+clicks through to the index, opens a tile, and presses Back gets the reverse turn and
+the index; pressing it again returns them to where they started. Each press undoes one
+step, which is what Back does everywhere. Worth stating only because it was asked, and
+because the answer is "nothing to build".
+
+---
+
+## The document title
+
+`document.title` is set from the fetched page's `<title>` on open, and restored on
+close. The fragment contract already collects it (`FragmentSuccess.title`) and Phase 1
+deliberately derives no behaviour from it, so this consumes data that is already in
+hand.
+
+The reason is history rather than tabs. A browser's Back long-press menu labels entries
+from `document.title` **as it stood when the entry was created**, so without this every
+entry reads "Spectrum Paper Turn" and the menu is useless for navigating back through
+several turns.
+
+**The ordering is a real constraint, not a detail.** Set `document.title` *before*
+`pushState`. The natural-looking order — push, then retitle — labels the new entry with
+the previous page's title, which is the exact failure this is meant to fix. It wants an
+explicit requirement rather than a comment.
+
+The original title has to be captured at startup so close can restore it, and a page
+whose `<title>` is absent must leave the title alone rather than blank it.
+
+This is a **host-global mutation**, and belongs on the Phase 4 list for that reason —
+see [Host globals](#host-globals) below.
+
+---
+
+## Host globals
+
+Three questions in this phase turned out to be the same question: *does this component
+get to mutate global browser state that a host page also relies on?*
+
+- `history.scrollRestoration` — **no**, and the spike showed it is unnecessary anyway.
+- `document.title` — **yes**, because a wrong title is a visible defect.
+- `freezeScroll` mutating the host's `<body>` — already the case since before Phase 1,
+  and already on the Phase 4 list as an overridable scroll freeze.
+
+The standing rule, so the next instance is a one-line decision rather than a debate:
+
+> A host-global mutation is permitted in Phases 2–3, and every one goes on the Phase 4
+> list to be made overridable.
+
+That keeps the phases moving without accumulating surprises for the packaging work. The
+Phase 4 row of the master phasing table has been updated to name the document title
+alongside the scroll freeze.
+
 ---
 
 ## Query parameters, and a guarantee that must not break
@@ -266,7 +325,7 @@ assuming every `popstate` means "close the detail surface".
 
 | Layer | Adds |
 | --- | --- |
-| Unit | The pushed URL preserves the existing search string, for each of the four parameters and for combinations. `popstate` while `opening` or `closing` routes to `cancel()` rather than `close()`. State identification rejects a foreign `history.state`. |
+| Unit | The pushed URL preserves the existing search string, for each of the four parameters and for combinations. `popstate` while `opening` or `closing` routes to `cancel()` rather than `close()`. State identification rejects a foreign `history.state`. `document.title` is set **before** the push, restored on close, and left alone when the fetched page has no `<title>`. |
 | Interaction | Open, then Back, reverses the turn and restores focus to the tile. The close button produces the same result as Back, with the URL returning to the index. Back pressed mid-turn settles to the nearer endpoint without throwing. Exactly one history entry per open, asserted by pressing Back once. A cold load of a detail URL renders the standalone page and does not attempt a turn. Reduced-motion and explicit-fallback opens push exactly one entry. Scroll position survives a history-driven close, extending the kept test that already covers the same-document one. |
 | Visual | **No new baselines.** Nothing about history changes a pixel, and the pending affordance that might have is Phase 2's problem. |
 
@@ -293,6 +352,10 @@ signal that history was layered on rather than woven in.
   `close()` and `cancel()`; the reverse turn is used as built.
 - **No change to the fragment contract.** A page turnable in Phase 1 is turnable here.
 - **No change to `MotionProfile`.**
+- **No `history.scrollRestoration`.** Spiked and shown unnecessary; see
+  [Scroll position](#scroll-position).
+- **No native anchor for the close button.** Spiked and rejected; see
+  [The close button stays a button](#the-close-button-stays-a-button).
 - **No reconstruction of the shell on a cold detail-page load.** The host serves a real
   page; that is the whole point.
 - **No prefetch and no latency budget.** Phase 2.
@@ -302,15 +365,17 @@ signal that history was layered on rather than woven in.
 
 ## Open questions
 
-1. **Should the pushed entry use a `<title>` from the fetched page?** The fragment
-   contract already collects it and Phase 1 deliberately derives no behaviour from it.
-   Setting `document.title` on open would make browser history and tab labels correct,
-   and would need restoring on close. Cheap, but it is a behaviour change beyond
-   history and should be chosen rather than assumed.
-2. **What should Back do when the reader arrived by deep link and then turned?** They
-   land on a detail page, click through to the index, open a tile: Back now returns to
-   the index rather than to where they started. Probably correct, but it is worth
-   agreeing it is not surprising.
+1. ~~**Should the pushed entry use a `<title>` from the fetched page?**~~ **Answered:
+   yes, set it and restore it on close.** Not tab polish — the browser's Back long-press
+   menu takes entry titles from `document.title` as it stands when the entry is created,
+   so leaving it alone makes every history entry read "Spectrum Paper Turn" and be
+   mutually indistinguishable. The data is already collected and discarded. See
+   [The document title](#the-document-title) for the ordering constraint.
+2. ~~**What should Back do when the reader arrived by deep link and then turned?**~~
+   **Answered: it is correct, and needs recording rather than engineering.** Each Back
+   undoes one step, which is Back working as it does everywhere. One edge found while
+   confirming it is folded into
+   [Deep linking](#deep-linking-works-already-and-that-is-worth-stating).
 3. ~~**Does `scrollRestoration = 'manual'` belong to this component at all?**~~
    **Answered: do not set it.** Spiked under both settings and a no-history control,
    three runs each: drift was zero in all three, because `freezeScroll` pins the body so
