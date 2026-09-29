@@ -1,10 +1,9 @@
 # Design Document: Prefetch and the latency budget
 
-**Status:** Proposed — not yet approved. Of the four open questions, one is answered,
-one is retired, one is split so that only a follow-up measurement remains, and **one is
-still open: the pending affordance's visual design**, which is the single thing gating
-requirements. `requirements.md` and `tasks.md` are derived from this document once it is
-approved, per the repo's design-first workflow.
+**Status:** Proposed — not yet approved, but **all four open questions are now
+resolved**: two answered, one retired, and one split so that only a follow-up
+measurement remains. Nothing further gates deriving requirements. `requirements.md` and
+`tasks.md` follow once this document is approved, per the repo's design-first workflow.
 
 **Branch:** `phase-2-prefetch-and-latency`
 
@@ -268,9 +267,49 @@ existing tile bounds does not.
 worse than no affordance, because it draws the eye to something already finished. It
 appears only after a delay, and a warmed activation must never reach that delay.
 
-This is the piece most likely to need design iteration rather than engineering, and
-the first place to accept a smaller answer: a subtle `aria-busy` plus an opacity shift
-is defensible, and a spinner inside a tile probably is not.
+### Chosen: dim the card, and say so in the accessibility tree
+
+Four candidates were mocked against the real `sp-card` and the real `styles.css` —
+dim, pulse, top-edge progress sweep, and corner spinner. The mock is at
+`mocks/pending-affordance.html` and is dev-only; see
+[the mock's own notes](../../mocks/pending-affordance.ts) for what each one cost.
+
+**The decision is the dim.** Concretely:
+
+- `data-paper-turn-pending="true"` on the tile trigger drives it, so the production
+  change is one attribute toggle plus one CSS block.
+- `opacity: 0.55` on the tile's `sp-card`, with a 120 ms `ease-out` transition.
+- `aria-busy="true"` on the same trigger, which is **not optional decoration**. Opacity
+  alone signals through appearance only, so without it the affordance does not exist for
+  anyone using a screen reader. The pairing is what makes the state perceivable rather
+  than merely visible.
+- Nothing is drawn. No pseudo-element, no animation, no second focal point.
+- The delay before it appears is a `ResolverConfig` field, ~100 ms to start, sitting
+  alongside the latency budget. Like the budget, the *mechanism* is what requirements
+  assert and the *value* is a tunable to be measured later. It has to be shorter than
+  the budget, or the fallback commit would fire before the tile ever acknowledged the
+  click.
+
+The reasoning is about **frequency**, not aesthetics. Once prefetch lands, most
+activations are cache hits that never reach the delay threshold at all. The affordance
+is the exception path, and the exception path should be the quietest thing that works.
+The dim costs one property, has nothing to keep in sync with `prefers-reduced-motion`,
+and cannot flash distractingly because there is nothing drawn to flash.
+
+The sweep was the runner-up and remains defensible: it is the conventional loading
+signal and the only candidate implying direction. It was not chosen because it buys that
+with two moving parts, a `prefers-reduced-motion` branch, and an `overflow: hidden` on
+the grid item to clip its travel — a layout constraint none of the others carry. The
+spinner was mocked in order to be ruled out: it puts chrome in a second tile corner and
+is the most likely of the four to read as a glitch on a warm activation.
+
+On the 120 ms transition: a fade is not motion in the vestibular sense that
+`prefers-reduced-motion` exists to address, so it is retained under that preference
+rather than branched. Stated here because it is a choice, not an oversight.
+
+The affordance must be cleared on every exit from the pending state — settle, failure
+fall-through, and supersession alike. A tile left dimmed after an abandoned activation
+is a worse defect than never having dimmed it.
 
 ---
 
@@ -298,8 +337,8 @@ The existing layering holds.
 | Layer | Adds |
 | --- | --- |
 | Unit | `warm` does not take the activation token — the load-bearing test. Cache hit, miss, LRU eviction, age expiry, entry drop after a downstream failure. Budget elapsing sets the fallback flag; the flag clears on settle. `warm` is skipped when `saveData` is true, and behaves normally when the connection API is absent entirely. |
-| Interaction | Hover then click issues **one** request. Hover over a second tile during a pending activation does not swallow the first click. A slow resolve takes the fallback transition and still opens. The pending affordance appears on a cold activation and never on a warm one. |
-| Visual | **No new baselines.** The pending affordance must not move layout, which is what makes that achievable. |
+| Interaction | Hover then click issues **one** request. Hover over a second tile during a pending activation does not swallow the first click. A slow resolve takes the fallback transition and still opens. The pending affordance appears on a cold activation and never on a warm one, carries `aria-busy` while present, and is cleared on settle, on fall-through, and on supersession. |
+| Visual | **No new baselines.** The affordance changes one property inside the existing tile bounds and draws nothing, which is what makes that achievable — and is worth asserting rather than assuming, since it was the constraint that chose it. |
 
 The regression this suite exists to prevent is the one named at the top: a prefetch
 superseding a live activation and swallowing a click. It should be asserted directly
@@ -334,9 +373,10 @@ not respond.
    throttled connection and a real host, and that can happen after this phase is built.
    The suspicion that it should differ between pointer and touch survives as a thing to
    look for in the data rather than a decision to make now.
-2. **What should the pending affordance actually look like?** The constraints above
-   rule out a lot — no layout movement, nothing on the fast path — but do not pick
-   one. This is a design question, not an engineering one.
+2. ~~**What should the pending affordance actually look like?**~~ **Answered: dim the
+   card to `opacity: 0.55`, paired with `aria-busy` on the trigger.** Four candidates
+   were mocked against the real component and reviewed; see
+   [Chosen: dim the card](#chosen-dim-the-card-and-say-so-in-the-accessibility-tree).
 3. ~~**Should `warm` be disabled under a data-saving or metered-connection signal?**~~
    **Answered: respect `saveData`, ignore `effectiveType`.** See
    [Metered connections](#metered-connections).

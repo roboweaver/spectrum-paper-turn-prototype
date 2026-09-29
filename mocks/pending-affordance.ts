@@ -11,6 +11,13 @@
  * style lives in this file rather than in `styles.css` so nothing here can reach the
  * application or its visual baselines.
  *
+ * **Outcome: option A, the dim, was chosen**, paired with `aria-busy` on the trigger.
+ * The reasoning is frequency rather than aesthetics — once prefetch lands, most
+ * activations are cache hits that never reach the delay threshold, so the affordance is
+ * the exception path and should be the quietest thing that works. The other three are
+ * kept here rather than deleted, so the comparison that produced the decision can be
+ * re-run if it is ever revisited. See the design's "Chosen: dim the card" section.
+ *
  * The three constraints from the design, which the options are meant to be judged
  * against:
  *
