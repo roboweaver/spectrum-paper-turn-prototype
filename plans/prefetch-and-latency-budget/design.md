@@ -1,9 +1,9 @@
 # Design Document: Prefetch and the latency budget
 
-**Status:** Proposed — not yet approved, but **all four open questions are now
-resolved**: two answered, one retired, and one split so that only a follow-up
-measurement remains. Nothing further gates deriving requirements. `requirements.md` and
-`tasks.md` follow once this document is approved, per the repo's design-first workflow.
+**Status:** Approved. All four open questions are resolved — two answered, one retired,
+and one split so that only a follow-up measurement remains.
+[`requirements.md`](./requirements.md) is derived from this document and
+[`tasks.md`](./tasks.md) from that.
 
 **Branch:** `phase-2-prefetch-and-latency`
 
