@@ -46,7 +46,7 @@ main.ts
 | `timeline.ts` | One `requestAnimationFrame` loop producing normalized progress. |
 | `motion-profile.ts` | Durations, easing, bend depth, fold softness, mesh density, texture caps. |
 | `content/fragment.ts` | Pure functions. Page HTML in, an adoptable `DocumentFragment` or a named contract failure out. No network, no live-document mutation, never throws. |
-| `content/content-resolver.ts` | The only module that touches the network. Owns the fetch, the same-origin check, single-flight, and supersession. Reads no geometry and calls no coordinator method. |
+| `content/content-resolver.ts` | The only module that touches the network. Owns the fetch, the same-origin check, single-flight, supersession, and the body cache. Reads no geometry and calls no coordinator method. |
 | `content/capture-readiness.ts` | Awaits fonts and image decoding for adopted content, bounded. Total: a failed decode or an elapsed bound reports and continues. |
 | `content/resolver-config.ts` | Resolution's tunables, kept deliberately out of `MotionProfile`. |
 
@@ -138,6 +138,97 @@ slotted text, so omitting it underlines every tile. And the often-claimed
 "works without JavaScript" benefit does **not** apply here: `index.html` is an empty
 `<div id="app">` and `createDemoApp` builds the whole grid at runtime, so blocking
 the module leaves no tiles at all. That benefit belongs to a server-rendered host.
+
+### Warming and resolving are different verbs
+
+`ContentResolver` exposes `warm(url)` and `resolve(url)`, and the split is not stylistic.
+
+`resolve` increments an activation token on every call, which is how a second click
+supersedes a first. A prefetch implemented as an early `resolve` would therefore
+supersede a *pending* click — and the activation path treats a superseded outcome as "do
+nothing at all". The click would vanish with no error, no log, and nothing visible but a
+tile that did not respond. Moving the pointer would be enough to lose a click.
+
+So `warm` never touches the token. It returns `void` rather than a promise, so no caller
+can await a speculative fetch, and it swallows every outcome, because a prefetch failure
+is not actionable when the activation will make the same request and report properly.
+
+A `resolve(url, { prefetch: true })` flag was rejected: it would switch off supersession,
+outcome reporting, and failure propagation at once — three behaviours behind one
+parameter — and leave both modes returning `Promise<ResolveOutcome>` for a caller to
+confuse. Two names make the mistake unrepresentable.
+
+Warming happens on `pointerover`, `focusin`, and `touchstart`, delegated on the grid.
+**Not `pointerenter`**, which does not bubble and so never reaches a delegated listener
+at all. Delegation is not optional: the tile-count control re-renders the grid, so a
+listener bound to a trigger is discarded with it.
+
+`warm` is skipped when `navigator.connection.saveData` is set. Nothing else about the
+connection is consulted — `effectiveType` is ambiguous for prefetching, since a slow
+connection is where warming helps most *and* where a wasted request hurts most. Absence
+of the API means warm normally, since it is Chromium-only.
+
+### The cache holds bodies, not fragments
+
+For the same reason single-flight shares response text: `extractFragment` must run per
+consumer so that no two activations are handed one mutable DOM subtree. The extra parse
+is a fraction of a millisecond against a round trip.
+
+Bounded two ways, both in `ResolverConfig` — an LRU entry cap and a maximum age. A `Map`
+is its own LRU here, since insertion order plus delete-then-set gives most-recently-used
+for free and makes the oldest key the first one iteration yields.
+
+Deliberately **no HTTP cache semantics**: no `ETag`, no `Cache-Control` parsing, no
+revalidation. The browser's own cache already sits beneath `fetch` and honours whatever
+the host sends; a second cache disagreeing with the first is worse than none. The age cap
+bounds *our* staleness, nothing more. Failures are never cached, and an activation that
+fails after resolution succeeded drops its entry so a retry re-fetches rather than
+replaying a body that may have been the cause.
+
+### The latency budget reaches the fallback through an injected function
+
+`selectMotionMode` is already a dependency the coordinator calls inside `open()` and
+`close()`. So when resolution exceeds `latencyBudgetMs`, the activation path sets a flag
+that the injected selector also consults, and the existing fallback path runs —
+**without a line changing in `transition-coordinator.ts`, `runFallbackTo`, or the motion
+mode**.
+
+The budget downgrades rather than abandons: resolution is still awaited to completion,
+and what changes is that the turn takes the opacity/scale path instead of the paper turn,
+which is the right answer when there was nothing to photograph in time. The flag is
+cleared when the coordinator returns to `idle` rather than at settle-open, so a turn that
+opened in fallback also closes in fallback — an open/close pair in different modes would
+read as a bug.
+
+It covers **resolution only**. The capture-readiness wait keeps its own separate bound
+and keeps proceeding in full motion, because a slow decode means the content is there but
+not yet paintable — a different failure with a different remedy. Conflating them would
+throw away the turn for a page whose images were merely slow.
+
+### The pending affordance is a dim, and that is a decision
+
+After `pendingAffordanceDelayMs` an unresolved activation's trigger gains
+`data-paper-turn-pending="true"` and `aria-busy="true"`, and its card drops to
+`opacity: 0.55`.
+
+The `aria-busy` is half the affordance rather than a nicety: opacity signals through
+appearance only, so without it the state does not exist for anyone using a screen reader.
+
+Four candidates were mocked against the real card — dim, pulse, progress sweep, corner
+spinner — and kept in `mocks/pending-affordance.ts` so the comparison can be re-run. The
+dim won on **frequency**: once prefetch lands, most activations are cache hits that never
+reach the delay at all, so this is the exception path and the exception path should be the
+quietest thing that works.
+
+Two constraints are load-bearing. The rule changes no layout property, because every
+visual baseline contains the grid and `paper-turn-start` is grid-only. And the delay must
+be shorter than the latency budget — `validateResolverConfig` throws otherwise — or the
+fallback commit fires before the tile has acknowledged the press.
+
+The affordance is cleared on every route out of an activation: settling open, falling
+through to navigation, and being superseded. That last one is the easiest to forget
+because nothing else visible happens on it, and a tile left dimmed after an abandoned
+click is worse than never having dimmed it.
 
 ### The demo generates its own pages
 

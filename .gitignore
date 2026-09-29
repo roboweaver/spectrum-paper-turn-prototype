@@ -7,6 +7,9 @@ test-results/
 # reviewed. The committed fixtures under public/fixtures/ are deliberately in a
 # sibling directory so the generator's wipe cannot reach them.
 public/detail/
+# Screenshots of the design mocks, regenerated on demand by
+# `npx playwright test --config=mocks/playwright.mocks.config.ts`.
+mocks/shots/
 playwright-report/
 blob-report/
 playwright/.cache/
