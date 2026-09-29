@@ -24,8 +24,8 @@ task 1.3 asserts it.
 
 ## Tasks
 
-- [ ] 1. Split warming from resolving
-  - [ ] 1.1 Add `warm(url)` to `src/content/content-resolver.ts`
+- [x] 1. Split warming from resolving
+  - [x] 1.1 Add `warm(url)` to `src/content/content-resolver.ts`
     - Export `warm(url: string): void` on the `ContentResolver` interface, alongside the
       existing `resolve`
     - **Do not touch `currentActivation`.** That single line is the whole point of the
@@ -41,14 +41,14 @@ task 1.3 asserts it.
     - Read no geometry, call no coordinator method, mutate no detail surface
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.6, 1.7_
 
-  - [ ] 1.2 Reject a `resolve`-with-a-flag shape explicitly
+  - [x] 1.2 Reject a `resolve`-with-a-flag shape explicitly
     - Keep `resolve(url)` single-argument. No options object, no `prefetch` boolean
     - Record on the interface why: a flag switching off supersession, outcome reporting,
       and failure propagation is three behaviours behind one parameter, and leaves both
       modes returning `Promise<ResolveOutcome>` for a caller to confuse
     - _Requirements: 1.1_
 
-  - [ ] 1.3 Assert a warm cannot swallow an activation, in `tests/unit/content-resolver.test.ts`
+  - [x] 1.3 Assert a warm cannot swallow an activation, in `tests/unit/content-resolver.test.ts`
     - **The load-bearing test.** Start an activation against a gated response, issue
       several warms for other URLs while it is pending, release the activation's
       response, and assert its outcome is `resolved` and **not** `superseded`
@@ -59,8 +59,8 @@ task 1.3 asserts it.
       flight
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 2. Give the resolver a cache
-  - [ ] 2.1 Add the cache fields to `src/content/resolver-config.ts`
+- [x] 2. Give the resolver a cache
+  - [x] 2.1 Add the cache fields to `src/content/resolver-config.ts`
     - Add `cacheMaxEntries` and `cacheMaxAgeMs` with documented defaults, and
       `latencyBudgetMs` and `pendingAffordanceDelayMs` while the file is open
     - Record that `pendingAffordanceDelayMs` must be less than `latencyBudgetMs`, or the
@@ -71,7 +71,7 @@ task 1.3 asserts it.
       suites that build it as a literal compiling unmodified
     - _Requirements: 4.3, 4.4, 6.1, 7.4, 8.5_
 
-  - [ ] 2.2 Implement the cache in `src/content/content-resolver.ts`
+  - [x] 2.2 Implement the cache in `src/content/content-resolver.ts`
     - Store response **bodies** by absolute URL, not extracted fragments, so each
       consumer extracts its own independent `DocumentFragment`
     - Evict least-recently-used past `cacheMaxEntries`; treat an entry older than
@@ -88,14 +88,14 @@ task 1.3 asserts it.
     - Not shared across documents, not persisted, not exposed on `window`
     - _Requirements: 1.5, 4.1, 4.2, 4.3, 4.4, 4.6, 4.7, 10.8_
 
-  - [ ] 2.3 Drop a cache entry when its activation fails downstream
+  - [x] 2.3 Drop a cache entry when its activation fails downstream
     - Expose a way for the Activation_Handler to invalidate one URL, and call it when an
       activation fails after resolution succeeded
     - The reasoning is that the body may have been the cause, so a retry must re-fetch
       rather than re-serve it
     - _Requirements: 4.5_
 
-  - [ ] 2.4 Add the `saveData` guard
+  - [x] 2.4 Add the `saveData` guard
     - Skip the network in `warm` when `navigator.connection.saveData` is `true`
     - Warm normally when the connection API, the `connection` object, or the property is
       absent — absence is not a signal to abstain
@@ -104,7 +104,7 @@ task 1.3 asserts it.
     - Never let it affect `resolve`, which serves a click the user actually made
     - _Requirements: 5.1, 5.2, 5.3, 5.4_
 
-  - [ ] 2.5 Unit-test the cache and the guard
+  - [x] 2.5 Unit-test the cache and the guard
     - Cache hit issues no request; miss issues one; a second sequential resolve of a
       cached URL still issues none, which is the behaviour Phase 1 deliberately lacked
     - LRU eviction past the entry cap, and an entry past the age cap treated as absent
@@ -115,11 +115,11 @@ task 1.3 asserts it.
       unaffected by `saveData`
     - _Requirements: 1.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.7, 5.1, 5.2, 5.4_
 
-- [ ] 3. Checkpoint - the resolver is complete
+- [x] 3. Checkpoint - the resolver is complete
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 4. Warm from the grid
-  - [ ] 4.1 Add the delegated prefetch listeners in `src/main.ts`
+- [x] 4. Warm from the grid
+  - [x] 4.1 Add the delegated prefetch listeners in `src/main.ts`
     - Attach `pointerover`, `focusin`, and `touchstart` to `app.cardGrid`, resolving the
       tile with `closest('[data-card-trigger]')` exactly as the click handler does
     - **Not `pointerenter`.** It does not bubble, so a delegated listener never sees it —
@@ -132,7 +132,7 @@ task 1.3 asserts it.
     - No `mousedown` trigger, and no viewport-visibility trigger
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7_
 
-  - [ ] 4.2 Interaction-test the triggers
+  - [x] 4.2 Interaction-test the triggers
     - Hover then click issues exactly **one** request for that URL
     - Focus then activate by keyboard likewise
     - Moving the pointer across one tile repeatedly issues one request, not many
@@ -140,8 +140,8 @@ task 1.3 asserts it.
       click — the same regression as task 1.3, asserted in a real browser
     - _Requirements: 3.1, 3.2, 3.4, 2.1_
 
-- [ ] 5. Add the latency budget
-  - [ ] 5.1 Bound the resolution wait in `src/main.ts`
+- [x] 5. Add the latency budget
+  - [x] 5.1 Bound the resolution wait in `src/main.ts`
     - Race resolution against `latencyBudgetMs`; when the budget elapses first, mark this
       activation as having to take the fallback, and continue waiting for resolution
       rather than abandoning it
@@ -152,7 +152,7 @@ task 1.3 asserts it.
       is there but not yet paintable — a different failure with a different remedy
     - _Requirements: 6.1, 6.2, 6.4, 7.1, 7.2, 7.3_
 
-  - [ ] 5.2 Let the budget reach the coordinator through `selectMotionMode`
+  - [x] 5.2 Let the budget reach the coordinator through `selectMotionMode`
     - Extend the injected `selectMotionMode` in `main.ts` to return `fallback` when the
       current activation was marked slow, alongside the existing `?fallback=` and
       `browserMotionMode()` conditions
@@ -162,7 +162,7 @@ task 1.3 asserts it.
       would already have produced
     - _Requirements: 6.3, 6.5, 9.1, 9.3_
 
-  - [ ] 5.3 Unit-test the budget
+  - [x] 5.3 Unit-test the budget
     - The budget elapsing marks the activation and the selector then returns `fallback`
     - The mark clears on settle, so the next activation is not degraded
     - A resolution inside the budget leaves the selector's answer unchanged
@@ -170,8 +170,8 @@ task 1.3 asserts it.
     - A warm activation never reaches the budget
     - _Requirements: 6.2, 6.4, 6.5, 6.6_
 
-- [ ] 6. Add the pending affordance
-  - [ ] 6.1 Mark the trigger after the delay, in `src/main.ts`
+- [x] 6. Add the pending affordance
+  - [x] 6.1 Mark the trigger after the delay, in `src/main.ts`
     - After `pendingAffordanceDelayMs`, set `data-paper-turn-pending="true"` and
       `aria-busy="true"` on the activated trigger
     - Clear both on **every** exit from pending: settling open, falling through to
@@ -181,7 +181,7 @@ task 1.3 asserts it.
     - A warm activation must never reach the delay
     - _Requirements: 8.1, 8.6, 8.7_
 
-  - [ ] 6.2 Add the affordance styling to `src/styles.css`
+  - [x] 6.2 Add the affordance styling to `src/styles.css`
     - Reduce the card's opacity for a pending trigger, with a short `ease-out` transition
     - Change **no** layout property — not size, position, margin, padding, or border
       width. Every visual baseline contains the grid, so a layout change moves six frames
@@ -194,7 +194,7 @@ task 1.3 asserts it.
       later
     - _Requirements: 8.2, 8.3, 8.8_
 
-  - [ ] 6.3 Test the affordance
+  - [x] 6.3 Test the affordance
     - Unit: the delay is shorter than the budget by construction, and the attributes are
       set and cleared on each of the three exits
     - Interaction: a cold activation shows the affordance and carries `aria-busy`; a warm
@@ -203,13 +203,13 @@ task 1.3 asserts it.
       assertion that protects the reference images
     - _Requirements: 8.1, 8.3, 8.4, 8.5, 8.6, 8.7_
 
-- [ ] 7. Checkpoint - the feature works end to end
+- [x] 7. Checkpoint - the feature works end to end
   - Ensure all tests pass, ask the user if questions arise. Run `npm run test:visual`
     here specifically: task 6.2 is the only change in this phase that touches a rendered
     pixel, so this is the point at which a baseline could have moved.
 
-- [ ] 8. Document and verify
-  - [ ] 8.1 Update `docs/architecture.md` and `README.md`
+- [x] 8. Document and verify
+  - [x] 8.1 Update `docs/architecture.md` and `README.md`
     - Record the warm/resolve split and why it is two verbs rather than a flag
     - Record the prefetch triggers, and that `pointerenter` cannot be used because it
       does not bubble past a delegated listener
@@ -221,7 +221,7 @@ task 1.3 asserts it.
       best-effort and Chromium-only
     - _Requirements: 5.5_
 
-  - [ ] 8.2 Verify the Phase 2 boundary
+  - [x] 8.2 Verify the Phase 2 boundary
     - Grep to confirm no `pushState`, no `replaceState`, no `popstate`, no navigation on
       settle, no router, no `iframe`, no init contract, no top-layer surface, and no
       generalised token inlining
@@ -233,7 +233,7 @@ task 1.3 asserts it.
       `window`
     - _Requirements: 9.1, 9.2, 9.3, 9.5, 9.6, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8_
 
-  - [ ] 8.3 Run every gate
+  - [x] 8.3 Run every gate
     - `npm run lint`, `npm run typecheck`, `npm run build`, the unit suite, the
       interaction suite on all three projects, and the visual suite
     - The existing tests must pass unmodified, the sole permitted exception being a test

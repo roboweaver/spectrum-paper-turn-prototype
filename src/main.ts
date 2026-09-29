@@ -18,7 +18,7 @@ import { createTileGridController, type TileGridController } from './debug/tile-
 import { tileCountFromParams } from './tile-grid';
 import { TransitionCoordinator } from './transition/transition-coordinator';
 import { resolveGrabAnchor } from './transition/grab-anchor';
-import { createContentResolver } from './content/content-resolver';
+import { createContentResolver, type ResolveOutcome } from './content/content-resolver';
 import { awaitCaptureReadiness } from './content/capture-readiness';
 import type { MotionProfile } from './transition/types';
 
@@ -69,12 +69,29 @@ const transitionView = new DomTransitionView({
   fallback: app.listFocusFallback,
   renderDetail: app.renderDetail,
 });
-// Owns the network wait, the single-flight guard, and supersession. Deliberately
-// constructed outside the coordinator and never handed to it.
+// Owns the network wait, the single-flight guard, supersession, and the cache.
+// Deliberately constructed outside the coordinator and never handed to it.
 const resolver = createContentResolver();
+
+/**
+ * Whether the activation currently in flight exceeded the latency budget.
+ *
+ * Read by the injected `selectMotionMode` below and cleared when the coordinator
+ * returns to `idle`. Declared here rather than beside its uses because both the
+ * selector and the statechange listener close over it.
+ */
+let slowActivation = false;
 const coordinator = new TransitionCoordinator(transitionView, {
   profile,
-  selectMotionMode: () => (searchParams.has('fallback') ? 'fallback' : browserMotionMode()),
+  // The latency budget's entire integration with the transition. `selectMotionMode` is
+  // already an injected dependency the coordinator calls inside `open()` and `close()`,
+  // so a slow resolution reaches the existing fallback path without a line changing in
+  // `transition-coordinator.ts`, `runFallbackTo`, or the motion mode itself.
+  //
+  // Order matters: an explicit `?fallback=` or a device that cannot do full motion
+  // already returns `fallback`, and the budget must not be able to override *upwards*.
+  selectMotionMode: () =>
+    searchParams.has('fallback') || slowActivation ? 'fallback' : browserMotionMode(),
   capture: captureElement,
   createRenderer: (input) => new PaperTurnRenderer(input),
   runFallback: createFallbackRunner(app.detailSurface),
@@ -98,9 +115,123 @@ mountDebugPanel(transitionDebugger, createAnimationSpeedController(profile), doc
 root.dataset.transitionState = coordinator.state;
 coordinator.addEventListener('statechange', () => {
   root.dataset.transitionState = coordinator.state;
+
+  // The fallback commit is scoped to the activation that earned it. Cleared when the
+  // cycle returns to idle rather than at settle-open, so that a turn which opened in
+  // fallback also *closes* in fallback — the coordinator calls `selectMotionMode`
+  // again on close, and an open/close pair in different modes would look like a bug.
+  // Clearing it at all is what stops one slow page degrading the whole session.
+  if (coordinator.state === 'idle') {
+    slowActivation = false;
+  }
 });
 
 window.__paperTurn = { coordinator, profile, tiles };
+
+/**
+ * Warm a tile's content speculatively.
+ *
+ * Delegated for the same reason the click handler is: the tile-count control
+ * re-renders the grid, so a listener bound to a trigger would be discarded with it.
+ *
+ * `pointerover` rather than `pointerenter`, which does **not bubble** and so would
+ * never reach a delegated listener at all — verified in Chromium against this page.
+ * Because `pointerover` fires repeatedly as the pointer moves within one tile, the
+ * handler has to be cheap: `warm` on an already-warmed or in-flight URL is a map
+ * lookup and a return.
+ *
+ * No `preventDefault` anywhere here. Warming must not disturb the tile's native link
+ * behaviour, and these events are not activations.
+ */
+for (const type of ['pointerover', 'focusin', 'touchstart'] as const) {
+  app.cardGrid.addEventListener(type, (event) => {
+    const target = event.target as HTMLElement | null;
+    const trigger = target?.closest<HTMLElement>('[data-card-trigger]') ?? null;
+
+    if (!trigger || !app.cardGrid.contains(trigger)) {
+      return;
+    }
+
+    resolver.warm(trigger.getAttribute('href') ?? '');
+  });
+}
+
+/**
+ * Shows that an activation was heard, after a delay.
+ *
+ * The delay is what keeps the affordance off the fast path: once prefetch lands most
+ * activations resolve from cache long before it elapses, and a flash of pending state
+ * on a cache hit is worse than no affordance at all.
+ *
+ * `aria-busy` is not decoration alongside the opacity change. Opacity signals through
+ * appearance only, so without it the affordance does not exist for anyone using a
+ * screen reader.
+ */
+function markPending(trigger: HTMLElement, delayMs: number): { clear(): void } {
+  const timer = window.setTimeout(() => {
+    trigger.dataset.paperTurnPending = 'true';
+    trigger.setAttribute('aria-busy', 'true');
+  }, delayMs);
+
+  return {
+    clear() {
+      window.clearTimeout(timer);
+      delete trigger.dataset.paperTurnPending;
+      trigger.removeAttribute('aria-busy');
+    },
+  };
+}
+
+/**
+ * Resolves, and notes whether it took longer than the budget allows.
+ *
+ * The budget does not abandon the activation — it downgrades it. Resolution is still
+ * awaited to completion; what changes is that the turn will take the existing
+ * opacity/scale fallback instead of the paper turn, which is the right answer when
+ * there was nothing to photograph in time.
+ *
+ * Scoped to resolution only. The capture-readiness wait has its own separate bound and
+ * keeps proceeding in full motion, because a slow decode means the content is there but
+ * not yet paintable — a different failure with a different remedy. Conflating them would
+ * throw away the turn for a page whose images were merely slow.
+ */
+async function resolveWithinBudget(
+  href: string,
+): Promise<{ outcome: ResolveOutcome; exceededBudget: boolean }> {
+  const resolution = resolver.resolve(href);
+  let timer: number | undefined;
+
+  const budgetElapsed = new Promise<'budget'>((settle) => {
+    timer = window.setTimeout(() => settle('budget'), resolver.config.latencyBudgetMs);
+  });
+
+  try {
+    // Both branches map to the same value: a rejection here would otherwise reject the
+    // race *and* the `resolution` returned below, producing two unhandled rejections
+    // from one fault. `resolve` reports failures as outcomes rather than throwing, so
+    // this is belt-and-braces — but the cost of being wrong is noise in the console of
+    // someone debugging something else.
+    const winner = await Promise.race([
+      resolution.then(
+        () => 'resolved' as const,
+        () => 'resolved' as const,
+      ),
+      budgetElapsed,
+    ]);
+
+    // Returned rather than written to `slowActivation` here, and that distinction is
+    // the whole correctness argument. Requirement 6.4 asks for the fallback commit to
+    // be *scoped to the activation that exceeded the budget*, and a module-level
+    // boolean written at this moment cannot do that: a slow activation would set it,
+    // then a second activation could supersede and reach `open()` while the first is
+    // still in flight — inheriting a fallback it did not earn. Keeping the answer local
+    // and applying it immediately before `open()` means the value the coordinator reads
+    // always belongs to the activation actually opening.
+    return { outcome: await resolution, exceededBudget: winner === 'budget' };
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 // Delegated rather than bound per tile: the tile count control re-renders the
 // grid, so a listener attached to a trigger would be discarded with it.
@@ -150,7 +281,14 @@ async function activate(event: MouseEvent, trigger: HTMLElement): Promise<void> 
   event.preventDefault();
 
   const href = trigger.getAttribute('href') ?? '';
-  const outcome = await resolver.resolve(href);
+
+  // Cleared on *every* route out of this function, including the ones where nothing
+  // else visible happens. A tile left dimmed after an abandoned activation is a worse
+  // defect than never having dimmed it, and supersession is the path easiest to forget
+  // precisely because it is otherwise silent.
+  const pending = markPending(trigger, resolver.config.pendingAffordanceDelayMs);
+  const { outcome, exceededBudget } = await resolveWithinBudget(href);
+  pending.clear();
 
   if (outcome.kind === 'superseded') {
     // A later activation took over. Do nothing at all — in particular do not fall
@@ -211,12 +349,23 @@ async function activate(event: MouseEvent, trigger: HTMLElement): Promise<void> 
   const { triggers, rects } = app.measureTiles();
   const grabAnchor = resolveGrabAnchor(rects, triggers.indexOf(trigger));
 
+  // Applied here, immediately before `open()`, so the value the coordinator reads
+  // always belongs to the activation it is opening. Assigning unconditionally — rather
+  // than only when true — is what stops an abandoned slow activation leaking its
+  // fallback into the fast one that replaced it.
+  slowActivation = exceededBudget;
+
   runCoordinatorAction(
     'open',
     coordinator.open({
       sourceId,
       grabAnchor,
       trigger,
+    }).catch((error) => {
+      // The body may have been the cause, so a retry must re-fetch rather than
+      // re-serve it from the cache.
+      resolver.invalidate(href);
+      throw error;
     }),
   );
 }

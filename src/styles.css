@@ -149,6 +149,34 @@ button { font: inherit; }
 .card-trigger:focus-visible { outline: 3px solid #1473e6; outline-offset: 5px; }
 
 /*
+ * The pending affordance: an activation whose content has not arrived yet.
+ *
+ * Opacity and nothing else. Four candidates were mocked against the real card -- dim,
+ * pulse, top-edge progress sweep, corner spinner -- and the dim won on frequency rather
+ * than aesthetics: once prefetch lands, most activations are cache hits that never reach
+ * the delay at all, so this is the exception path and the exception path should be the
+ * quietest thing that works. See mocks/pending-affordance.ts.
+ *
+ * No layout property may appear in this rule. Every visual baseline contains the grid
+ * and `paper-turn-start` is grid-only, so a change to size, position, margin, padding,
+ * or border width would move six frames on two platforms. Nothing is drawn either: no
+ * pseudo-element, no animation, no second focal point.
+ *
+ * The opacity alone is not the whole affordance -- `main.ts` pairs it with `aria-busy`,
+ * because appearance is not perceivable by assistive technology.
+ */
+.card-trigger[data-paper-turn-pending='true'] sp-card {
+  opacity: 0.55;
+  transition: opacity 120ms ease-out;
+}
+
+/*
+ * Deliberately not branched under `prefers-reduced-motion`. A 120ms opacity fade is not
+ * motion in the vestibular sense that preference addresses, and removing it would make
+ * the state appear abruptly for no benefit. A decision, not an oversight.
+ */
+
+/*
  * Tiles shorten as columns are added, so a 4 x 4 stays on screen without
  * scrolling. Three or fewer columns resolve to the original 330px/190px exactly,
  * which is what keeps the default layout pixel-identical.
