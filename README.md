@@ -108,6 +108,14 @@ through to an ordinary navigation and the destination still works. See
 [the fragment contract](docs/fragment-contract.md) for what a page must provide, and
 for the deliberate decision to adopt page content unchanged.
 
+Hovering, focusing, or touching a tile **warms** its content into a cache, so clicking
+usually issues no request at all and the turn starts immediately. Warming is skipped when
+`navigator.connection.saveData` is set — best-effort and Chromium-only, so not a
+guarantee. A resolution slower than the latency budget still opens the page; it just
+takes the opacity/scale fallback instead of the paper turn. Past a shorter delay the
+activated tile dims and reports `aria-busy`, which most activations never reach because
+they resolve from cache.
+
 The debug panel is **on by default** — this demo is published so the turn can be
 inspected, so the controls are the point rather than a hidden extra. Only
 `debug=0`, `false`, `off`, or `no` (any case) hide it. Every other value,
