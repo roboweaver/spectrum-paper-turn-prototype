@@ -5,8 +5,11 @@ document and covers **Phase 1 only**; `tasks.md` follows from it. Open questions
 1–4 and 7–9 are answered below. Questions 5 and 6 remain open and gate Phase 5
 rather than Phase 1.
 
-One scope change was made at approval: **navigation on settle moved from Phase 1
-to Phase 3.** See [Phasing](#phasing) for why.
+One scope change was made at approval, and later corrected: navigation on settle
+moved from Phase 1 to Phase 3 at approval, then out of Phase 3 again once Phase 3
+planning found that adopted content is already live. It is now a **Phase 5 escape
+hatch for script-dependent routes**, not a Phase 3 mechanism. See
+[Phasing](#phasing) for why.
 **Branch:** `url-addressable-detail-content`
 **Supersedes nothing.** Extends [`docs/architecture.md`](../../docs/architecture.md);
 the geometry, renderer, and coordinator contracts described there are preserved.
@@ -115,8 +118,7 @@ click ─▶ ContentResolver.resolve(url) ────────────�
                                                  ├─ capture × 2
                                                  └─ animate ─▶ settleOpen
                                                                  │
-                                                                 └─ pushState, then
-                                                                    navigate  (Phase 3)
+                                                                 └─ pushState  (Phase 3)
 ```
 
 What this buys:
@@ -731,19 +733,26 @@ later ones are each independently valuable.
 | --- | --- | --- |
 | **1** | `ContentResolver`, fragment contract, `CardRecord.url`, tiles as anchors, generic detail region, `renderDetail` adopts a fragment, fonts/images awaited before capture, failure falls through to navigation | A working URL-backed turn, transition subsystem untouched |
 | **2** | Prefetch on hover/focus/touch, fragment cache, latency budget, fallback commit on slow resolve, pending affordance | The turn feels native rather than merely correct |
-| **3** | `pushState`/`popstate`, deep linking, query-param carry-over, **navigation on settle**, and what the reverse turn means once a real navigation has replaced the document. *Not* standalone page rendering — the host already serves real pages. | Real navigation, on real pages |
-| **4** | **Component packaging.** Generalise token inlining beyond `--spectrum`, scope or shadow the CSS, top-layer surface, dynamic Three import, guarded element registration, adopt host tiles instead of rendering them, overridable scroll freeze | Embeddable in Grimoire, WordPress, OPA |
-| **5** | `PaperTurnPage` init contract, pre-init during prefetch, capture-after-ready sequencing, preview escape hatch, nav grid layout policy, raised tile ceiling, retuned duration. **Spans two repos** — OmnisTools implements the contract and a per-route partial render mode. | Usable as OmnisTools navigation |
+| **3** | `pushState`/`popstate` around the same-document turn, deep linking, query-param carry-over. The adopted content stays the destination; history is updated around it, and the existing reverse turn closes it. *Not* standalone page rendering — the host already serves real pages. | An honest URL, on the same-document turn |
+| **4** | **Component packaging.** Generalise token inlining beyond `--spectrum`, scope or shadow the CSS, top-layer surface, dynamic Three import, guarded element registration, adopt host tiles instead of rendering them, **and make every host-global mutation overridable — the scroll freeze and, from Phase 3, `document.title`** | Embeddable in Grimoire, WordPress, OPA |
+| **5** | `PaperTurnPage` init contract, pre-init during prefetch, capture-after-ready sequencing, preview escape hatch, **navigation on settle as a per-route escape hatch for script-dependent pages** (and what the reverse turn means once a real navigation has replaced the document), nav grid layout policy, raised tile ceiling, retuned duration. **Spans two repos** — OmnisTools implements the contract and a per-route partial render mode. | Usable as OmnisTools navigation |
 | **6** | Cross-origin taint logging, capture-cost telemetry, authoring lint for the fragment contract | Operability |
 
 **This branch is Phase 1.** Phases 2–6 get their own branches and their own PRs.
 
-### Why navigation on settle is Phase 3 and not Phase 1
+### Why navigation on settle is a Phase 5 escape hatch, not Phase 1 or Phase 3
 
 The end goal is the full turn onto real pages, and a turn that lands on adopted
 DOM only reaches that goal for pages with no script dependency. So the instinct is
-to put "navigate to the real URL once the turn settles" in Phase 1 and have the
-mechanism be honest from the start. Two things say otherwise.
+to put "navigate to the real URL once the turn settles" early — in Phase 1 to make
+the mechanism honest from the start, or in Phase 3 alongside the history work. Both
+instincts are wrong, and for the same reason: **adopted content is already live**
+for document-like pages, so navigation on settle buys nothing there and the only
+pages that need it are the script-dependent ones Phase 5 exists for. The detail
+below is why it does not belong earlier; Phase 3 planning (see
+[`../real-navigation-and-history/design.md`](../real-navigation-and-history/design.md))
+is where the "already live" finding was confirmed and the escape hatch was moved to
+Phase 5.
 
 **Phase 1 is not dead without it.** Its destinations are the pages the
 Detail_Page_Generator emits from `cards.ts` — the five-field skeleton, plain text,
@@ -752,23 +761,24 @@ hydrate. Phase 1 demonstrates end to end with no navigation at all. The inertnes
 problem is a property of *foreign script-dependent* pages, which Phase 1 does not
 have by construction.
 
-**Navigating on settle destroys the reverse turn, and repairing it is history
-work.** `close()` is fully built: `runTransition('close')`, a `closing` state, the
-close button and Escape both wired in `main.ts`, and both faces captured in one
-pass specifically so the reverse pays for no second capture. Navigate away on
-settle and none of that survives — the document is replaced, the coordinator
-instance is gone, and "close" degrades into a back-navigation to a freshly loaded
-index that must re-measure from scratch. Reconstructing a reverse turn across a
-document boundary is real design work, and it is the same subject as
-`pushState`/`popstate`: what the history entries are, what Back means mid-turn,
-and what the close affordance does once it is a navigation. Doing it in Phase 1
-means doing that thinking twice.
+**Navigating on settle destroys the reverse turn, and repairing it is a second
+implementation of the feature.** `close()` is fully built: `runTransition('close')`,
+a `closing` state, the close button and Escape both wired in `main.ts`, and both
+faces captured in one pass specifically so the reverse pays for no second capture.
+Navigate away on settle and none of that survives — the document is replaced, the
+coordinator instance is gone, and "close" degrades into a back-navigation to a
+freshly loaded index that must re-measure from scratch. Reconstructing a reverse
+turn across a document boundary is real design work with no payoff for document-like
+pages, which is why it is deferred to the Phase 5 routes that actually require it.
 
-Keeping them together also clarifies the fragment contract. In Phase 1 the adopted
-fragment *is* the destination. From Phase 3 it exists only to be photographed —
-one animation duration, then a real page load replaces it. That is a narrower
-obligation (pixels only, never interactive, never needs to survive), and it is
-easier to specify once than to specify one way and then loosen.
+The fragment contract is **unchanged** by this reasoning. In Phase 1 the adopted
+fragment *is* the destination, and it stays the destination through Phase 3: a
+live region whose links work, whose forms focus, and whose `:hover` responds. The
+narrower "pixels only, never interactive, never needs to survive" obligation applies
+*only* to the Phase 5 navigation-on-settle escape hatch, where the fragment is
+photographed for one animation duration and then a real page load replaces it. Phase
+3 does not narrow the contract, so the two documents agree: adopted content is live
+everywhere except behind the Phase 5 escape hatch.
 
 Phase 4 is the largest and is gated on the host stacks. Grimoire is Go with
 server-rendered templates under `themes/` and a separate React admin SPA, so its
@@ -890,9 +900,10 @@ spec; Phase 1 neither answers nor depends on them.
   accepted risk that degrades to the fallback, and logged so it is diagnosable.
 - No component packaging in phase 1. The mechanism is proven in the prototype's
   own page first; phase 4 makes it embeddable.
-- **No navigation on settle in phase 1.** Moved to phase 3, with the history work
-  and the reverse-turn question it is inseparable from. See
-  [Why navigation on settle is Phase 3](#why-navigation-on-settle-is-phase-3-and-not-phase-1).
+- **No navigation on settle in phase 1.** Moved to phase 5 as a per-route escape
+  hatch for script-dependent pages, with the reverse-turn-across-a-document-boundary
+  question it is inseparable from. See
+  [Why navigation on settle is a Phase 5 escape hatch](#why-navigation-on-settle-is-a-phase-5-escape-hatch-not-phase-1-or-phase-3).
 - **No validation against a page this repo did not author.** Every page Phase 1
   fetches is emitted from the same records the tiles are built from. The messy
   fixtures probe the contract's edges deliberately, but they are still fixtures.

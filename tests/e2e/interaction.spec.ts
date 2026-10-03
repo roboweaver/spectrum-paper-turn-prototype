@@ -939,3 +939,332 @@ test('the adopted detail content is the fetched page, not a local record', async
     ),
   ).toBe('#00a0a0');
 });
+
+test('closing restores the scroll position the turn was opened from', async ({ page }) => {
+  // Characterises current behaviour before Phase 3 adds history entries, because that
+  // is the thing most likely to disturb it: a real `popstate` brings the browser's own
+  // scroll restoration, which could fight `restoreScroll`.
+  //
+  // A spike confirmed it does not — drift was zero with `scrollRestoration` left at
+  // `auto` and at `manual`, since `freezeScroll` pins the body with `position: fixed`
+  // so the document never actually scrolls during the turn. This test is what would
+  // catch that conclusion being wrong later.
+  //
+  // `dispatchEvent` rather than `click` throughout: Playwright's click scrolls the
+  // target into view first, which moves the page *before* `freezeScroll` records a
+  // position and shows up as phantom drift.
+  await page.setViewportSize({ width: 1000, height: 500 });
+  await page.goto('/?tiles=16&duration=120');
+  await page.locator('[data-card-trigger]').nth(8).waitFor();
+
+  await page.evaluate(() => window.scrollTo(0, 400));
+  await expect.poll(async () => page.evaluate(() => Math.round(window.scrollY))).toBe(400);
+
+  await page.locator('[data-card-trigger]').nth(8).dispatchEvent('click');
+
+  // Waiting on the coordinator's own state, not on visibility: `open()` makes the
+  // surface visible early while it is still clipped to a point and the state is
+  // `opening`, so a visibility wait followed by a close throws.
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __paperTurn?: { coordinator: { state: string } } }).__paperTurn
+            ?.coordinator.state,
+      ),
+    )
+    .toBe('open');
+
+  // The body is pinned while open, so the document reports no scroll of its own.
+  expect(await page.evaluate(() => document.body.style.position)).toBe('fixed');
+
+  await page.locator('[data-close-button]').dispatchEvent('click');
+  await expect(detailSurface(page)).toBeHidden();
+
+  expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(400);
+  expect(await page.evaluate(() => document.body.style.position)).toBe('');
+
+/*
+ * Prefetch, the latency budget, and the pending affordance.
+ *
+ * Counting requests is the shared technique here. A route handler that records every
+ * `/detail/*` URL it sees is how "hover then click issues one request" and "a warm
+ * activation never shows the affordance" are both made observable.
+ */
+
+/**
+ * Records whether the WebGL overlay ever existed, via a MutationObserver.
+ *
+ * The overlay is how full motion is distinguished from the fallback: full motion creates
+ * it for the duration of the turn and the fallback never creates it at all. Both leave
+ * none behind once settled, so it has to be observed *while* the turn runs.
+ *
+ * Polling for it is unreliable — a `?duration=120` turn can open and settle inside one
+ * poll interval, which makes a "never appeared" assertion pass for the wrong reason. An
+ * observer cannot miss it.
+ */
+async function watchForOverlay(page: Page): Promise<() => Promise<boolean>> {
+  await page.evaluate(() => {
+    const flags = window as unknown as { __sawOverlay?: boolean };
+    flags.__sawOverlay = document.querySelector('.paper-turn-overlay') !== null;
+
+    new MutationObserver(() => {
+      if (document.querySelector('.paper-turn-overlay')) {
+        flags.__sawOverlay = true;
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+
+  return async () =>
+    page.evaluate(() => (window as unknown as { __sawOverlay?: boolean }).__sawOverlay === true);
+}
+
+/** Records every detail-page request, optionally holding them open. */
+async function countDetailRequests(page: Page): Promise<{
+  urls: () => string[];
+  hold: () => void;
+  release: () => Promise<void>;
+}> {
+  const urls: string[] = [];
+  let gate: Promise<void> | null = null;
+  let open: () => void = () => undefined;
+
+  await page.route('**/detail/*.html', async (route) => {
+    urls.push(route.request().url());
+    if (gate) {
+      await gate;
+    }
+    await route.continue();
+  });
+
+  return {
+    urls: () => [...urls],
+    hold: () => {
+      gate = new Promise<void>((settle) => {
+        open = () => settle();
+      });
+    },
+    release: async () => {
+      open();
+      gate = null;
+    },
+  };
+}
+
+test('hovering then clicking issues one request, not two', async ({ page }) => {
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+  const card = cardTrigger(page, 0);
+
+  await card.hover();
+  await expect.poll(() => requests.urls().length).toBe(1);
+
+  await card.click();
+  await expect(detailSurface(page)).toBeVisible();
+
+  // The click found the body already cached, so it issued no request of its own.
+  expect(requests.urls()).toHaveLength(1);
+});
+
+test('moving across one tile issues one request, not one per event', async ({ page }) => {
+  // `pointerover` fires repeatedly as the pointer moves within a tile, which is why the
+  // handler has to be cheap and idempotent.
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+  const box = await cardTrigger(page, 0).boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) return;
+
+  for (const fraction of [0.2, 0.4, 0.6, 0.8]) {
+    await page.mouse.move(box.x + box.width * fraction, box.y + box.height * 0.5);
+  }
+
+  await expect.poll(() => requests.urls().length).toBe(1);
+});
+
+test('focusing a tile by keyboard warms it too', async ({ page }) => {
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+
+  await cardTrigger(page, 1).focus();
+
+  await expect.poll(() => requests.urls().length).toBe(1);
+  expect(requests.urls()[0]).toContain('/detail/workflow.html');
+});
+
+test('warming a second tile mid-activation does not swallow the first click', async ({ page }) => {
+  // The regression this whole phase is shaped around, asserted in a real browser as
+  // well as in the unit suite. A warm that took the activation token would leave this
+  // click superseded, and the activation path would silently do nothing.
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+  requests.hold();
+
+  await cardTrigger(page, 0).click();
+
+  // The pointer wanders while the click is still resolving.
+  await cardTrigger(page, 1).hover();
+  await cardTrigger(page, 2).hover();
+
+  await requests.release();
+
+  await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toHaveText('Spectrum foundations');
+  expect(new URL(page.url()).pathname).toBe('/');
+});
+
+test('a cold activation shows the pending affordance and says so to assistive tech', async ({
+  page,
+}) => {
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+  requests.hold();
+
+  const card = cardTrigger(page, 0);
+  // Dispatched rather than clicked, so Playwright's hover-before-click cannot warm the
+  // tile first and turn this into a cache hit.
+  await card.dispatchEvent('click');
+
+  await expect(card).toHaveAttribute('data-paper-turn-pending', 'true');
+  await expect(card).toHaveAttribute('aria-busy', 'true');
+
+  await requests.release();
+  await expect(detailSurface(page)).toBeVisible();
+
+  // Cleared on the way out.
+  await expect(card).not.toHaveAttribute('data-paper-turn-pending', 'true');
+  await expect(card).not.toHaveAttribute('aria-busy', 'true');
+});
+
+test('the affordance changes no layout, only opacity', async ({ page }) => {
+  // The assertion that protects the twelve reference images. Every baseline contains the
+  // grid, so an affordance that moved a tile would move six frames on two platforms.
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+  const card = cardTrigger(page, 0);
+
+  const before = await card.boundingBox();
+  requests.hold();
+  await card.dispatchEvent('click');
+  await expect(card).toHaveAttribute('data-paper-turn-pending', 'true');
+
+  const during = await card.boundingBox();
+  expect(during).toEqual(before);
+
+  await requests.release();
+});
+
+test('a warm activation never shows the affordance', async ({ page }) => {
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+  const card = cardTrigger(page, 0);
+
+  await card.hover();
+  await expect.poll(() => requests.urls().length).toBe(1);
+
+  await card.click();
+  await expect(detailSurface(page)).toBeVisible();
+
+  // Resolved from cache well inside the delay, so the mark was never applied.
+  await expect(card).not.toHaveAttribute('data-paper-turn-pending', 'true');
+});
+
+test('a superseded activation leaves no tile marked', async ({ page }) => {
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+  requests.hold();
+
+  await cardTrigger(page, 0).dispatchEvent('click');
+  await cardTrigger(page, 1).dispatchEvent('click');
+  await requests.release();
+
+  await expect(detailSurface(page)).toBeVisible();
+  await expect(page.locator('[data-paper-turn-pending="true"]')).toHaveCount(0);
+});
+
+test('a resolution slower than the budget still opens, via the fallback', async ({ page }) => {
+  // The budget downgrades rather than abandons: the page opens either way, and what
+  // changes is that it takes the existing opacity/scale path instead of the paper turn.
+  await page.goto('/?duration=120');
+  await page.route('**/detail/*.html', async (route) => {
+    await new Promise((settle) => setTimeout(settle, 400));
+    await route.continue();
+  });
+
+  const sawOverlay = await watchForOverlay(page);
+  await cardTrigger(page, 0).dispatchEvent('click');
+
+  await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toBeFocused();
+
+  // The fallback path never creates the WebGL overlay, which is what makes this
+  // observable at all: both paths leave none behind once settled.
+  expect(await sawOverlay()).toBe(false);
+});
+
+test('one slow activation does not degrade the next turn', async ({ page }) => {
+  await page.goto('/?duration=120');
+  let slow = true;
+  await page.route('**/detail/*.html', async (route) => {
+    if (slow) {
+      await new Promise((settle) => setTimeout(settle, 400));
+    }
+    await route.continue();
+  });
+
+  await cardTrigger(page, 0).dispatchEvent('click');
+  await expect(detailSurface(page)).toBeVisible();
+  await closeButton(page).click();
+  await expect(detailSurface(page)).toBeHidden();
+
+  // Back to idle, so the fallback mark has been cleared.
+  slow = false;
+  await cardTrigger(page, 1).dispatchEvent('click');
+  await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toHaveText('Workflow patterns');
+});
+
+test('a slow activation that is superseded does not degrade the turn that replaces it', async ({
+  page,
+}) => {
+  // Found by self-review, not by a failing test, and it would have been invisible.
+  //
+  // The fallback flag was cleared only when the coordinator transitioned back to `idle`.
+  // But an activation that never reaches `open()` causes no state change at all, so the
+  // listener never fired and the flag survived into the *next* activation — sending a
+  // perfectly fast turn down the fallback path. Supersession is exactly that shape:
+  // nothing else visible happens on it.
+  await page.goto('/?duration=120');
+
+  let delayFirst = true;
+  await page.route('**/detail/*.html', async (route) => {
+    if (delayFirst && route.request().url().includes('spectrum.html')) {
+      // Slower than the latency budget, so this activation is marked slow.
+      await new Promise((settle) => setTimeout(settle, 400));
+    }
+    await route.continue();
+  });
+
+  // Start a slow activation and let it pass the budget, so it is marked slow. Then
+  // supersede it with a fast one *while it is still in flight* — which is the case the
+  // bug needed, and the reason a first attempt at this test passed against the broken
+  // code: it targeted the activation after next, by which time a settle had already
+  // cleared the flag.
+  const sawOverlay = await watchForOverlay(page);
+  await cardTrigger(page, 0).dispatchEvent('click');
+  await page.waitForTimeout(200);
+  await cardTrigger(page, 1).dispatchEvent('click');
+
+  await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toHaveText('Workflow patterns');
+
+  // The superseding activation resolved from an undelayed route, so it earned no
+  // fallback and must have run the full turn.
+  expect(await sawOverlay()).toBe(true);
+  await expect(overlay(page)).toHaveCount(0);
+
+  // And the abandoned activation's own late completion changes nothing.
+  delayFirst = false;
+  await closeButton(page).click();
+  await expect(detailSurface(page)).toBeHidden();
+});
