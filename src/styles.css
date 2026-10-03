@@ -15,6 +15,25 @@ body {
 
 button { font: inherit; }
 
+/*
+ * Off-screen but still in the accessibility tree, for the polite status region that
+ * announces a pending activation. `position: absolute` keeps it out of flow so it
+ * claims no layout and never reaches the grid-only visual baselines; the clip and 1px
+ * box are the standard visually-hidden recipe that keeps the text readable to a screen
+ * reader rather than removed with `display: none`.
+ */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 [data-transition-state='preparing'],
 [data-transition-state='opening'],
 [data-transition-state='closing'] {
@@ -167,7 +186,20 @@ button { font: inherit; }
  */
 .card-trigger[data-paper-turn-pending='true'] sp-card {
   opacity: 0.55;
-  transition: opacity 120ms ease-out;
+  /*
+   * Longhands rather than the `transition` shorthand. The shorthand resets
+   * `transition-property` to `opacity` alone, and at this rule's specificity (0,2,1)
+   * that would outrank `.card-trigger sp-card { transition: transform ... }` at
+   * (0,1,1) and snap the hover `transform: scale(1.02)` instead of easing it whenever
+   * the pointer leaves a pending tile. Naming both properties keeps the transform
+   * easing while adding the opacity fade. That same specificity is also what lets the
+   * opacity change survive the `prefers-reduced-motion: reduce` block below (which
+   * sets `transition: none` on `.card-trigger sp-card`), so this is a deliberate
+   * dependency: the longhands preserve both behaviours at once.
+   */
+  transition-property: opacity, transform;
+  transition-duration: 120ms, 140ms;
+  transition-timing-function: ease-out;
 }
 
 /*

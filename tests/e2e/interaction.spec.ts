@@ -1077,12 +1077,16 @@ test('a cold activation shows the pending affordance and says so to assistive te
   requests.hold();
 
   const card = cardTrigger(page, 0);
+  const status = page.locator('[data-pending-status]');
   // Dispatched rather than clicked, so Playwright's hover-before-click cannot warm the
   // tile first and turn this into a cache hit.
   await card.dispatchEvent('click');
 
   await expect(card).toHaveAttribute('data-paper-turn-pending', 'true');
   await expect(card).toHaveAttribute('aria-busy', 'true');
+  // The polite live region carries the pending state as words, for assistive tech that
+  // would not hear `aria-busy` flip on the already-focused trigger.
+  await expect(status).toHaveText('Loading Spectrum foundations');
 
   await requests.release();
   await expect(detailSurface(page)).toBeVisible();
@@ -1090,6 +1094,59 @@ test('a cold activation shows the pending affordance and says so to assistive te
   // Cleared on the way out.
   await expect(card).not.toHaveAttribute('data-paper-turn-pending', 'true');
   await expect(card).not.toHaveAttribute('aria-busy', 'true');
+  await expect(status).toHaveText('');
+});
+
+test('a fast sweep across tiles does not warm one the pointer only passes through', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name.includes('mobile'), 'pointer hover-intent is a desktop concern');
+
+  // Hover intent: a pointer that only crosses a tile on its way elsewhere must not fire a
+  // warm for it. The sweep moves across the first tile without pausing, so its
+  // `pointerover` is cancelled by the `pointerout` before the intent delay elapses.
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+
+  const first = await cardTrigger(page, 0).boundingBox();
+  const second = await cardTrigger(page, 1).boundingBox();
+  expect(first).not.toBeNull();
+  expect(second).not.toBeNull();
+  if (!first || !second) return;
+
+  // Sweep from well left of the grid, across tile 0, and settle on tile 1 — fast enough
+  // that tile 0 never dwells. `steps` keeps the move smooth rather than a single jump.
+  await page.mouse.move(first.x - 40, first.y + first.height * 0.5);
+  await page.mouse.move(second.x + second.width * 0.5, second.y + second.height * 0.5, {
+    steps: 4,
+  });
+
+  // Tile 1 is where the pointer came to rest, so once its intent delay elapses it warms —
+  // and it is the only tile that should.
+  await expect.poll(() => requests.urls().length).toBe(1);
+  expect(requests.urls()[0]).toContain('/detail/workflow.html');
+});
+
+test('touching a tile warms it, then activating issues no second request', async ({
+  page,
+}, testInfo) => {
+  test.skip(!testInfo.project.name.includes('mobile'), 'mobile-only touch coverage');
+
+  // `touchstart` is the one touch users actually hit and the one most likely to race into
+  // a synthesized click, yet it had no coverage. Touch intent followed by activation must
+  // produce exactly one request: the touch warms, the tap resolves from cache.
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+
+  await cardTrigger(page, 2).dispatchEvent('touchstart');
+  await expect.poll(() => requests.urls().length).toBe(1);
+
+  await cardTrigger(page, 2).tap();
+  await expect(detailSurface(page)).toBeVisible();
+
+  // The tap found the body already warmed, so it issued no request of its own.
+  expect(requests.urls()).toHaveLength(1);
+  expect(requests.urls()[0]).toContain('/detail/content.html');
 });
 
 test('the affordance changes no layout, only opacity', async ({ page }) => {
@@ -1130,12 +1187,127 @@ test('a superseded activation leaves no tile marked', async ({ page }) => {
   const requests = await countDetailRequests(page);
   requests.hold();
 
-  await cardTrigger(page, 0).dispatchEvent('click');
-  await cardTrigger(page, 1).dispatchEvent('click');
+  const first = cardTrigger(page, 0);
+  const second = cardTrigger(page, 1);
+
+  // Mark A, and wait until its pending affordance is actually applied, so the clear
+  // below is a real transition rather than a mark that never happened.
+  await first.dispatchEvent('click');
+  await expect(first).toHaveAttribute('data-paper-turn-pending', 'true');
+
+  // Supersede with B *while A's request is still held*. A's marker must clear the moment
+  // B starts — independently of A's network ever completing. Asserting this before the
+  // release is the strengthening the review asked for: the old test released the shared
+  // gate first, so it only proved a settled call eventually clears itself.
+  await second.dispatchEvent('click');
+  await expect(first).not.toHaveAttribute('data-paper-turn-pending', 'true');
+  await expect(first).not.toHaveAttribute('aria-busy', 'true');
+
   await requests.release();
 
   await expect(detailSurface(page)).toBeVisible();
+  await expect(detailHeading(page)).toHaveText('Workflow patterns');
   await expect(page.locator('[data-paper-turn-pending="true"]')).toHaveCount(0);
+});
+
+test('a request that fails after the affordance shows clears the tile and navigates', async ({
+  page,
+}) => {
+  // The stuck-pending cluster's user-facing guarantee: a request that does not succeed
+  // must clear its pending marker and fall through to a real navigation rather than
+  // leaving the tile dimmed and `aria-busy`. A `503` that arrives *after* the affordance
+  // delay drives the full show-then-clear-then-navigate path through the same
+  // `request-failed`/`response-not-ok` → `window.location.assign(href)` route the request
+  // timeout uses in production.
+  //
+  // NB: the timeout path itself (a request that never settles on its own) is covered by
+  // the unit suite — `the request lifetime bound` — because a Playwright-intercepted
+  // fetch stays suspended below the client-side `AbortSignal.timeout`, so the abort
+  // cannot be driven from a held route here. This exercises the identical clear-and-
+  // fall-through branch via a genuine failing response.
+  await page.goto('/?duration=120');
+
+  await page.route('**/detail/*.html', async (route) => {
+    if (route.request().resourceType() === 'fetch') {
+      // Long enough that the pending affordance (100ms delay) is shown first.
+      await new Promise((settle) => setTimeout(settle, 300));
+      await route.fulfill({ status: 503, body: 'nope' });
+      return;
+    }
+    await route.continue();
+  });
+
+  const card = cardTrigger(page, 0);
+  await card.dispatchEvent('click');
+
+  // The tile acknowledges the click past the affordance delay...
+  await expect(card).toHaveAttribute('data-paper-turn-pending', 'true');
+  await expect(card).toHaveAttribute('aria-busy', 'true');
+
+  // ...then the failure clears the marker (`pending.clear()` runs before the fall-through)
+  // and the browser navigates to the real href. The navigation detaches the trigger, so
+  // reaching the destination URL is the proof the activation left its pending state
+  // rather than hanging dimmed.
+  await page.waitForURL((url) => url.pathname.endsWith('/detail/spectrum.html'));
+});
+
+test('a cold activation whose open fails invalidates the body so a retry re-fetches', async ({
+  page,
+}) => {
+  // Exercises the `.catch` on `coordinator.open()` in main.ts that calls
+  // `resolver.invalidate(href)`: a body that broke the turn must not stay cached, or the
+  // retry re-serves it and fails identically. Forcing a genuine open failure drives the
+  // wiring; the observable proof is that the retry issues a *second* request.
+  await page.goto('/?duration=120');
+  const requests = await countDetailRequests(page);
+
+  // Force the coordinator's open setup to fail on the first activation, which routes
+  // through the open-setup recovery and rejects `open()` — the exact path main.ts wraps
+  // with `resolver.invalidate(href)`. `resolveSource` is the only open-setup step that
+  // runs *after* the direct `renderDetail`, so patching the list's `[data-source-id]`
+  // lookup to throw fails open() cleanly without disturbing the earlier `measureTiles`
+  // (which queries `[data-card-trigger]`). Restored after the first failure so the retry
+  // can succeed and re-fetch.
+  await page.evaluate(() => {
+    // `DomTransitionView.resolveSource` searches the list surface for `[data-source-id]`,
+    // so patch that element's lookup rather than the grid's.
+    const list = document.querySelector<HTMLElement>('[data-list-surface]');
+    if (!list) {
+      throw new Error('Expected list surface');
+    }
+    const flags = window as unknown as { __forceOpenFailure?: boolean };
+    flags.__forceOpenFailure = true;
+    const originalQuery = list.querySelectorAll.bind(list);
+    list.querySelectorAll = ((selector: string) => {
+      if (flags.__forceOpenFailure && selector.includes('data-source-id')) {
+        // An empty NodeList makes `resolveSource` return null, so open setup throws
+        // "Source card no longer exists" and rejects — the path main.ts wraps with
+        // `resolver.invalidate(href)`.
+        return originalQuery('[data-never-matches]');
+      }
+      return originalQuery(selector);
+    }) as typeof list.querySelectorAll;
+  });
+
+  await cardTrigger(page, 0).dispatchEvent('click');
+  await expect.poll(() => requests.urls().length).toBe(1);
+  // The forced open failure routes through recovery back to idle, and the detail surface
+  // stays hidden. Wait for that so the retry below starts from a settled state rather than
+  // racing the recovery.
+  await expect(root(page)).toHaveAttribute('data-transition-state', 'idle');
+  await expect(detailSurface(page)).toBeHidden();
+
+  // Let the retry succeed.
+  await page.evaluate(() => {
+    (window as unknown as { __forceOpenFailure?: boolean }).__forceOpenFailure = false;
+  });
+
+  await cardTrigger(page, 0).dispatchEvent('click');
+
+  // A second request proves the first body was invalidated rather than re-served from the
+  // cache — the `.catch` on `coordinator.open()` called `resolver.invalidate(href)`.
+  await expect.poll(() => requests.urls().length).toBe(2);
+  await expect(detailSurface(page)).toBeVisible();
 });
 
 test('a resolution slower than the budget still opens, via the fallback', async ({ page }) => {

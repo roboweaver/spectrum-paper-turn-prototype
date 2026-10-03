@@ -81,6 +81,18 @@ const resolver = createContentResolver();
  * selector and the statechange listener close over it.
  */
 let slowActivation = false;
+
+/**
+ * The pending handle owned by the activation currently in flight, if any.
+ *
+ * Tracked at module scope rather than only in `activate`'s local `pending` const so
+ * that a newer click can clear the previous tile's marker the *moment* it starts,
+ * rather than having to wait for the earlier `resolve()` to settle and report
+ * `superseded`. Without this a slow or hung first request would leave its tile dimmed
+ * and `aria-busy` behind the second tile that replaced it.
+ */
+let activePending: { clear(): void } | null = null;
+
 const coordinator = new TransitionCoordinator(transitionView, {
   profile,
   // The latency budget's entire integration with the transition. `selectMotionMode` is
@@ -143,17 +155,101 @@ window.__paperTurn = { coordinator, profile, tiles };
  * No `preventDefault` anywhere here. Warming must not disturb the tile's native link
  * behaviour, and these events are not activations.
  */
-for (const type of ['pointerover', 'focusin', 'touchstart'] as const) {
-  app.cardGrid.addEventListener(type, (event) => {
-    const target = event.target as HTMLElement | null;
-    const trigger = target?.closest<HTMLElement>('[data-card-trigger]') ?? null;
+/**
+ * Shapes the prefetch traffic, so a sweep across the grid does not fan out into one
+ * concurrent request per tile.
+ *
+ * Two guards, both in this listener layer rather than inside `resolver.warm`, so the
+ * resolver's "cheap, idempotent, owed-to-nobody" contract — and the 1000 unit tests
+ * that pin it — stay untouched:
+ *
+ * - **Hover intent.** A `pointerover` warms only after the pointer has dwelled on the
+ *   tile for `warmHoverIntentMs`; moving on before then cancels it. Keyboard focus and
+ *   touch are deliberate intent, not an incidental sweep, so `focusin`/`touchstart`
+ *   warm immediately.
+ * - **A concurrency cap.** At most `maxConcurrentWarms` warms are counted in flight at
+ *   once. The resolver already de-dupes cached/in-flight URLs, so this only needs to
+ *   gate genuinely new warms. A slot is released after `requestTimeoutMs`, which bounds
+ *   how long a warm's request can live, so the count can never sit below the true
+ *   number in flight.
+ */
+const hoverIntentTimers = new Map<HTMLElement, number>();
+let warmsInFlight = 0;
 
-    if (!trigger || !app.cardGrid.contains(trigger)) {
+function requestWarm(href: string): void {
+  if (warmsInFlight >= resolver.config.maxConcurrentWarms) {
+    return;
+  }
+  warmsInFlight += 1;
+  resolver.warm(href);
+  // The resolver gives no completion signal by design, so the slot is freed on the
+  // request-lifetime bound. A warm's own fetch cannot outlive `requestTimeoutMs`, so
+  // releasing then never frees a slot a live request still holds.
+  window.setTimeout(() => {
+    warmsInFlight = Math.max(0, warmsInFlight - 1);
+  }, resolver.config.requestTimeoutMs);
+}
+
+function triggerFrom(event: Event): HTMLElement | null {
+  const target = event.target as HTMLElement | null;
+  const trigger = target?.closest<HTMLElement>('[data-card-trigger]') ?? null;
+  return trigger && app.cardGrid.contains(trigger) ? trigger : null;
+}
+
+// `pointerover` is debounced for hover intent; the pointer must dwell before a warm
+// fires, so sweeping across a tile to reach another one does not warm it.
+app.cardGrid.addEventListener(
+  'pointerover',
+  (event) => {
+    const trigger = triggerFrom(event);
+    if (!trigger) {
       return;
     }
+    if (hoverIntentTimers.has(trigger)) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      hoverIntentTimers.delete(trigger);
+      requestWarm(trigger.getAttribute('href') ?? '');
+    }, resolver.config.warmHoverIntentMs);
+    hoverIntentTimers.set(trigger, timer);
+  },
+  { passive: true },
+);
 
-    resolver.warm(trigger.getAttribute('href') ?? '');
-  });
+// Cancel a pending hover-intent warm when the pointer leaves the tile before it dwelled
+// long enough. `pointerout` bubbles (unlike `pointerleave`), so it reaches the delegate.
+app.cardGrid.addEventListener(
+  'pointerout',
+  (event) => {
+    const trigger = triggerFrom(event);
+    if (!trigger) {
+      return;
+    }
+    const timer = hoverIntentTimers.get(trigger);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      hoverIntentTimers.delete(trigger);
+    }
+  },
+  { passive: true },
+);
+
+// Keyboard focus and touch are deliberate intent, so they warm immediately — but still
+// through the concurrency cap. Passive: the handler never calls `preventDefault`, so
+// `touchstart` must not block the scrolling grid.
+for (const type of ['focusin', 'touchstart'] as const) {
+  app.cardGrid.addEventListener(
+    type,
+    (event) => {
+      const trigger = triggerFrom(event);
+      if (!trigger) {
+        return;
+      }
+      requestWarm(trigger.getAttribute('href') ?? '');
+    },
+    { passive: true },
+  );
 }
 
 /**
@@ -167,10 +263,15 @@ for (const type of ['pointerover', 'focusin', 'touchstart'] as const) {
  * appearance only, so without it the affordance does not exist for anyone using a
  * screen reader.
  */
-function markPending(trigger: HTMLElement, delayMs: number): { clear(): void } {
+function markPending(trigger: HTMLElement, delayMs: number, title: string): { clear(): void } {
   const timer = window.setTimeout(() => {
     trigger.dataset.paperTurnPending = 'true';
     trigger.setAttribute('aria-busy', 'true');
+    // `aria-busy` on an already-focused trigger is a defer-presentation hint, not an
+    // arrival announcement, so a screen-reader user may not hear it. The polite live
+    // region carries the state as words, re-announced on each change. Set alongside the
+    // opacity mark and on the same delayed timer, so a cache hit never populates it.
+    app.pendingStatus.textContent = title ? `Loading ${title}` : 'Loading';
   }, delayMs);
 
   return {
@@ -178,6 +279,7 @@ function markPending(trigger: HTMLElement, delayMs: number): { clear(): void } {
       window.clearTimeout(timer);
       delete trigger.dataset.paperTurnPending;
       trigger.removeAttribute('aria-busy');
+      app.pendingStatus.textContent = '';
     },
   };
 }
@@ -281,14 +383,27 @@ async function activate(event: MouseEvent, trigger: HTMLElement): Promise<void> 
   event.preventDefault();
 
   const href = trigger.getAttribute('href') ?? '';
+  const title = trigger.querySelector('sp-card')?.getAttribute('heading') ?? '';
+
+  // A newer click clears the previous tile's marker the moment it starts, rather than
+  // waiting for the earlier `resolve()` to settle and report `superseded`. Without this
+  // a slow or hung first request leaves its tile dimmed and `aria-busy` behind the
+  // second tile.
+  activePending?.clear();
 
   // Cleared on *every* route out of this function, including the ones where nothing
   // else visible happens. A tile left dimmed after an abandoned activation is a worse
   // defect than never having dimmed it, and supersession is the path easiest to forget
   // precisely because it is otherwise silent.
-  const pending = markPending(trigger, resolver.config.pendingAffordanceDelayMs);
+  const pending = markPending(trigger, resolver.config.pendingAffordanceDelayMs, title);
+  activePending = pending;
   const { outcome, exceededBudget } = await resolveWithinBudget(href);
   pending.clear();
+  // Only drop the shared reference if it is still ours: a later activation may have
+  // already replaced it (and cleared this one) while we were awaiting resolution.
+  if (activePending === pending) {
+    activePending = null;
+  }
 
   if (outcome.kind === 'superseded') {
     // A later activation took over. Do nothing at all — in particular do not fall
@@ -371,7 +486,20 @@ async function activate(event: MouseEvent, trigger: HTMLElement): Promise<void> 
 }
 
 app.closeButton.addEventListener('click', () => {
-  runCoordinatorAction('close', coordinator.close());
+  // On a close-setup failure the coordinator's recovery restores state to `open` — and
+  // because it was already `open`, `setState` is a no-op that fires no `statechange`.
+  // So the `idle` listener above never runs and `slowActivation` would survive into the
+  // next turn, degrading a perfectly fast activation to the fallback. Clear it on the
+  // failure path, keying the reset on the close attempt rather than on reaching `idle`.
+  // `selectMotionMode` has already been consulted inside `close()` by this point, so the
+  // open/close mode pairing this flag exists to preserve is unaffected.
+  runCoordinatorAction(
+    'close',
+    coordinator.close().catch((error) => {
+      slowActivation = false;
+      throw error;
+    }),
+  );
 });
 
 window.addEventListener('keydown', (event) => {

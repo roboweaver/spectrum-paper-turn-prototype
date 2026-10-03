@@ -47,6 +47,8 @@ export interface DemoApp {
   closeButton: HTMLElement;
   /** The tile grid itself, so activation can be delegated from one listener. */
   cardGrid: HTMLElement;
+  /** Polite live region for announcing a pending activation to assistive tech. */
+  pendingStatus: HTMLElement;
   /** Stage the content for the next activation. Call before `coordinator.open()`. */
   setPendingDetail(pending: PendingDetail | null): void;
   renderDetail(sourceId: string): void;
@@ -150,6 +152,14 @@ export function createDemoApp(
           </header>
           <ul class="card-grid" data-list-focus-fallback data-anchor-labels="true" tabindex="-1" aria-label="Design topics"></ul>
         </section>
+        <!-- A polite live region announcing a pending activation to assistive tech.
+             An aria-busy attribute on the already-focused trigger is a
+             defer-presentation hint, not an arrival announcement, so a screen-reader
+             user could otherwise get no signal that their click is waiting. Visually
+             hidden and absolutely positioned, so it claims no layout and stays off the
+             grid-only visual baselines. The delay before the pending mark fires means
+             most cache-hit activations never populate it. -->
+        <div class="visually-hidden" data-pending-status role="status" aria-live="polite"></div>
         <!-- tabindex="-1" so focusDetailHeading has somewhere inside the surface to
              land if an adopted fragment somehow arrives without its heading.
              Programmatic focus on a non-input does not trigger :focus-visible and
@@ -180,8 +190,16 @@ export function createDemoApp(
   const detailContent = root.querySelector<HTMLElement>('[data-detail-content]');
   const listFocusFallback = root.querySelector<HTMLElement>('[data-list-focus-fallback]');
   const closeButton = root.querySelector<HTMLElement>('[data-close-button]');
+  const pendingStatus = root.querySelector<HTMLElement>('[data-pending-status]');
 
-  if (!listSurface || !detailSurface || !detailContent || !listFocusFallback || !closeButton) {
+  if (
+    !listSurface ||
+    !detailSurface ||
+    !detailContent ||
+    !listFocusFallback ||
+    !closeButton ||
+    !pendingStatus
+  ) {
     throw new Error('Demo DOM contract is incomplete');
   }
 
@@ -259,6 +277,7 @@ export function createDemoApp(
     listFocusFallback,
     closeButton,
     cardGrid,
+    pendingStatus,
     setPendingDetail(pending: PendingDetail | null) {
       pendingDetail = pending;
       // Staging new content invalidates any previous adoption, so the next

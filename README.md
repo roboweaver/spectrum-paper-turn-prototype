@@ -109,12 +109,20 @@ through to an ordinary navigation and the destination still works. See
 for the deliberate decision to adopt page content unchanged.
 
 Hovering, focusing, or touching a tile **warms** its content into a cache, so clicking
-usually issues no request at all and the turn starts immediately. Warming is skipped when
+usually issues no request at all and the turn starts immediately. Because a warm is a
+credentialed same-origin GET fired before any click, a host's grid hrefs must be
+**side-effect-free** — safe, idempotent GETs, never a state-changing endpoint. Warm
+requests carry `Sec-Purpose: prefetch` and `Purpose: prefetch` headers so a host can keep
+speculation out of analytics and rate limits. A short hover-intent delay means sweeping the
+pointer across the grid to reach something else does not warm every tile it passes, and the
+number of concurrent warms is capped. Warming is skipped when
 `navigator.connection.saveData` is set — best-effort and Chromium-only, so not a
 guarantee. A resolution slower than the latency budget still opens the page; it just
-takes the opacity/scale fallback instead of the paper turn. Past a shorter delay the
-activated tile dims and reports `aria-busy`, which most activations never reach because
-they resolve from cache.
+takes the opacity/scale fallback instead of the paper turn. A single request is also
+bounded by a hard timeout, so a hung response fails over to an ordinary navigation rather
+than leaving the tile stuck. Past a shorter delay the activated tile dims, reports
+`aria-busy`, and announces "Loading <title>" through a polite status region, which most
+activations never reach because they resolve from cache.
 
 The debug panel is **on by default** — this demo is published so the turn can be
 inspected, so the controls are the point rather than a hidden extra. Only

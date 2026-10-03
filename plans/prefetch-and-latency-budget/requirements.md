@@ -142,6 +142,18 @@ that the turn starts when I click rather than after a wait.
    viewport.
 7. THE Prefetch_Listener SHALL NOT call `preventDefault()` and SHALL NOT interfere with
    the tile's native link behaviour.
+8. Because warming issues a credentialed same-origin GET against a tile's `href` on
+   hover, focus, or touch — before any click — a host's grid hrefs MUST be
+   side-effect-free: safe, idempotent GETs rather than state-changing endpoints. A
+   state-changing href would fire on hover with cookies attached. The hover-intent delay
+   and concurrent-warm cap shape the traffic but do not make a side-effecting href safe.
+9. THE Prefetch_Listener SHALL register its warm listeners as passive (`{ passive: true }`),
+   so that `touchstart` does not block scrolling the grid; it never calls
+   `preventDefault()`, so passive registration is safe.
+10. THE Prefetch_Listener SHALL apply a short hover-intent delay before warming on
+    `pointerover`, and SHALL cap the number of concurrent warms, so that a sweep across the
+    grid does not fan out into one concurrent request per tile. `focusin` and `touchstart`
+    are deliberate intent and warm immediately.
 
 ### Requirement 4: The fragment cache
 
