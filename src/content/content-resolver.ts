@@ -231,7 +231,15 @@ export function createContentResolver(options: ContentResolverOptions = {}): Con
       // Same-origin is a hard constraint, not a configurable one. The transition
       // adopts real DOM from this document; a cross-origin one cannot be adopted,
       // and an iframe would rasterise blank through `foreignObject`.
-      return resolved.origin === readOrigin() ? resolved.href : null;
+      if (resolved.origin !== readOrigin()) {
+        return null;
+      }
+      // Strip the fragment before keying. The hash is never sent to the server, so
+      // `/detail/a.html#intro` and `/detail/a.html#api` are one resource and must
+      // share a single cache slot. The query is kept: it is server-addressable, so
+      // two queries are legitimately two resources.
+      resolved.hash = '';
+      return resolved.href;
     } catch {
       return null;
     }
@@ -244,7 +252,7 @@ export function createContentResolver(options: ContentResolverOptions = {}): Con
    * in-flight request is joined rather than duplicated, and only a genuine miss
    * reaches the network.
    */
-  function fetchText(absolute: string): Promise<string> {
+  function fetchText(absolute: string, purpose: 'warm' | 'activate'): Promise<string> {
     const cached = cachedBody(absolute);
     if (cached !== null) {
       return Promise.resolve(cached);
@@ -256,7 +264,22 @@ export function createContentResolver(options: ContentResolverOptions = {}): Con
     }
 
     const request = (async () => {
-      const response = await fetchImpl(absolute);
+      // A lifetime bound on the request itself, distinct from the latency budget:
+      // the budget only decides whether the turn downgrades, whereas a hung socket
+      // has to be terminated or the in-flight entry below never settles and the URL
+      // is poisoned for the session. `AbortSignal.timeout` rejects with a
+      // `TimeoutError`, which falls into `resolve`'s non-`HttpStatusError` branch and
+      // maps to `request-failed` — driving the activation to its fall-through
+      // navigation.
+      const init: RequestInit = { signal: AbortSignal.timeout(config.requestTimeoutMs) };
+      if (purpose === 'warm') {
+        // Lets a host exclude speculation from analytics and rate limits, the way a
+        // browser labels `<link rel="prefetch">`. Only warms carry it; a real
+        // activation is indistinguishable from any other navigation on purpose.
+        init.headers = { 'Sec-Purpose': 'prefetch', Purpose: 'prefetch' };
+      }
+
+      const response = await fetchImpl(absolute, init);
       if (!response.ok) {
         throw new HttpStatusError(response.status, absolute);
       }
@@ -293,7 +316,7 @@ export function createContentResolver(options: ContentResolverOptions = {}): Con
 
     let html: string;
     try {
-      html = await fetchText(absolute);
+      html = await fetchText(absolute, 'activate');
     } catch (error) {
       // Order matters. A superseded activation's *failure* is discarded too, or an
       // abandoned click would navigate away from the activation being watched.
@@ -319,6 +342,11 @@ export function createContentResolver(options: ContentResolverOptions = {}): Con
 
     const extracted = extractFragment(html);
     if (!extracted.ok) {
+      // The body was admitted on `response.ok`, before extraction ran, so a
+      // contract-violating response is now sitting in the cache. Drop it, or one bad
+      // response makes the tile unopenable for the whole age window and a server-side
+      // fix never takes effect because the retry never contacts the server.
+      cache.delete(absolute);
       return failed(extracted.reason, extracted.message);
     }
 
@@ -359,7 +387,7 @@ export function createContentResolver(options: ContentResolverOptions = {}): Con
     // Swallowed on purpose. A prefetch failure is not actionable — the activation
     // will make the same request and report properly — and an unhandled rejection
     // from a speculative fetch would be noise in the console.
-    void fetchText(absolute).catch(() => undefined);
+    void fetchText(absolute, 'warm').catch(() => undefined);
   }
 
   function invalidate(url: string): void {

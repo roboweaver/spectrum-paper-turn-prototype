@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderDetailPage } from '../../scripts/generate-detail-pages';
 import {
   type ContentResolverOptions,
@@ -46,7 +46,7 @@ function resolverWith(
   overrides: Partial<ContentResolverOptions> = {},
 ) {
   const calls: string[] = [];
-  const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchImpl = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     calls.push(url);
     return handler(url);
@@ -147,6 +147,100 @@ describe('createContentResolver', () => {
       await resolver.resolve('detail/spectrum.html');
 
       expect(calls).toHaveLength(1);
+    });
+  });
+
+  describe('the request lifetime bound', () => {
+    it('fails a request that never settles once the timeout fires', async () => {
+      vi.useFakeTimers();
+      try {
+        // The handler honours the abort signal the resolver attaches, standing in for
+        // a transport that keeps the socket open: it rejects only when the signal
+        // aborts, so nothing else can settle it.
+        const fetchImpl = vi.fn(
+          (_input: RequestInfo | URL, init?: RequestInit) =>
+            new Promise<Response>((_settle, rejectRequest) => {
+              init?.signal?.addEventListener('abort', () => {
+                rejectRequest(
+                  init.signal?.reason ?? new DOMException('aborted', 'TimeoutError'),
+                );
+              });
+            }),
+        );
+        const resolver = createContentResolver({
+          fetch: fetchImpl as unknown as typeof globalThis.fetch,
+          config: { ...DEFAULT_RESOLVER_CONFIG, requestTimeoutMs: 50 },
+        });
+
+        const activation = resolver.resolve('detail/spectrum.html');
+        await vi.advanceTimersByTimeAsync(50);
+        const outcome = await activation;
+
+        expect(outcome.kind).toBe('failed');
+        if (outcome.kind !== 'failed') return;
+        expect(outcome.reason).toBe('request-failed');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('clears the in-flight entry on timeout, so the same url can be requested afresh', async () => {
+      vi.useFakeTimers();
+      try {
+        const calls: string[] = [];
+        let attempt = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          calls.push(String(input));
+          attempt += 1;
+          // The first request hangs until aborted; the second resolves normally,
+          // which can only happen if the timed-out entry was removed from `inFlight`.
+          if (attempt === 1) {
+            return new Promise<Response>((_settle, rejectRequest) => {
+              init?.signal?.addEventListener('abort', () => {
+                rejectRequest(
+                  init.signal?.reason ?? new DOMException('aborted', 'TimeoutError'),
+                );
+              });
+            });
+          }
+          return Promise.resolve(okResponse(CONFORMING_PAGE));
+        });
+        const resolver = createContentResolver({
+          fetch: fetchImpl as unknown as typeof globalThis.fetch,
+          config: { ...DEFAULT_RESOLVER_CONFIG, requestTimeoutMs: 50 },
+        });
+
+        const first = resolver.resolve('detail/spectrum.html');
+        await vi.advanceTimersByTimeAsync(50);
+        expect((await first).kind).toBe('failed');
+
+        const second = await resolver.resolve('detail/spectrum.html');
+        expect(second.kind).toBe('resolved');
+        expect(calls).toHaveLength(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('the prefetch purpose header', () => {
+    it('labels a warm with Sec-Purpose and Purpose, and leaves an activation unmarked', async () => {
+      const { resolver, fetchImpl } = resolverWith(async () => okResponse(CONFORMING_PAGE));
+
+      resolver.warm('detail/spectrum.html');
+      await new Promise((settle) => setTimeout(settle, 0));
+
+      const warmInit = fetchImpl.mock.calls[0]?.[1] as RequestInit | undefined;
+      expect(warmInit?.headers).toMatchObject({
+        'Sec-Purpose': 'prefetch',
+        Purpose: 'prefetch',
+      });
+
+      // A fresh resolver, so the activation is a genuine miss rather than a cache hit.
+      const activation = resolverWith(async () => okResponse(CONFORMING_PAGE));
+      await activation.resolver.resolve('detail/other.html');
+      const activateInit = activation.fetchImpl.mock.calls[0]?.[1] as RequestInit | undefined;
+      expect(activateInit?.headers).toBeUndefined();
     });
   });
 
@@ -382,7 +476,10 @@ describe('createContentResolver', () => {
         'cacheMaxEntries',
         'captureReadinessTimeoutMs',
         'latencyBudgetMs',
+        'maxConcurrentWarms',
         'pendingAffordanceDelayMs',
+        'requestTimeoutMs',
+        'warmHoverIntentMs',
       ]);
 
       // The one relationship that must hold, or the fallback commit fires before the
@@ -586,6 +683,58 @@ describe('warm', () => {
       expect(outcome.kind).toBe('resolved');
       expect(calls).toHaveLength(1);
     });
+
+    describe('the default saveData reader', () => {
+      // The injected `saveData: () => false` the other tests use never reaches the
+      // real `navigator.connection?.saveData` default. These exercise it directly by
+      // mounting a connection object on the jsdom navigator, so a regression in the
+      // metered-connection check is caught rather than hidden behind the injection.
+      const navigatorWithConnection = globalThis.navigator as Navigator & {
+        connection?: { saveData?: boolean };
+      };
+      let hadOwnConnection = false;
+      let originalConnection: unknown;
+
+      beforeEach(() => {
+        hadOwnConnection = Object.hasOwn(navigatorWithConnection, 'connection');
+        originalConnection = navigatorWithConnection.connection;
+      });
+
+      afterEach(() => {
+        if (hadOwnConnection) {
+          Object.defineProperty(navigatorWithConnection, 'connection', {
+            configurable: true,
+            value: originalConnection,
+          });
+        } else {
+          delete (navigatorWithConnection as { connection?: unknown }).connection;
+        }
+      });
+
+      it('skips the warm when the connection reports saveData', () => {
+        Object.defineProperty(navigatorWithConnection, 'connection', {
+          configurable: true,
+          value: { saveData: true },
+        });
+        const { resolver, calls } = resolverWith(async () => okResponse(CONFORMING_PAGE));
+
+        resolver.warm('detail/spectrum.html');
+
+        expect(calls).toHaveLength(0);
+      });
+
+      it('issues the warm when the connection reports saveData is off', () => {
+        Object.defineProperty(navigatorWithConnection, 'connection', {
+          configurable: true,
+          value: { saveData: false },
+        });
+        const { resolver, calls } = resolverWith(async () => okResponse(CONFORMING_PAGE));
+
+        resolver.warm('detail/spectrum.html');
+
+        expect(calls).toHaveLength(1);
+      });
+    });
   });
 });
 
@@ -652,6 +801,46 @@ describe('the cache', () => {
     expect(() => resolver.invalidate('')).not.toThrow();
   });
 
+  it('drops a body that fails the fragment contract, so a retry re-fetches', async () => {
+    // The body is admitted on `response.ok`, before extraction runs, so a
+    // contract-violating response would otherwise sit in the cache and make the tile
+    // unopenable for the whole age window — and a server-side fix would never take
+    // effect because the retry never contacts the server.
+    let attempt = 0;
+    const { resolver, calls } = resolverWith(async () => {
+      attempt += 1;
+      return attempt === 1 ? okResponse(fixture('no-region.html')) : okResponse(CONFORMING_PAGE);
+    });
+
+    const first = await resolver.resolve('detail/spectrum.html');
+    expect(first.kind).toBe('failed');
+    if (first.kind === 'failed') expect(first.reason).toBe('missing-region');
+
+    const second = await resolver.resolve('detail/spectrum.html');
+    expect(second.kind).toBe('resolved');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('keys on the path without the fragment, so two hashes share one request', async () => {
+    // The hash is never sent to the server, so `#intro` and `#api` are one resource.
+    const { resolver, calls } = resolverWith(async () => okResponse(CONFORMING_PAGE));
+
+    await resolver.resolve('detail/a.html#intro');
+    await resolver.resolve('detail/a.html#api');
+
+    expect(calls).toHaveLength(1);
+  });
+
+  it('still keys on the query, so two queries are two requests', async () => {
+    // A query is server-addressable, so two queries are legitimately two resources.
+    const { resolver, calls } = resolverWith(async () => okResponse(CONFORMING_PAGE));
+
+    await resolver.resolve('detail/a.html?v=1');
+    await resolver.resolve('detail/a.html?v=2');
+
+    expect(calls).toHaveLength(2);
+  });
+
   it('caches no failure, so the next attempt asks again', async () => {
     let attempt = 0;
     const { resolver, calls } = resolverWith(async () => {
@@ -706,9 +895,12 @@ describe('validateResolverConfig', () => {
     for (const field of [
       'captureReadinessTimeoutMs',
       'latencyBudgetMs',
+      'requestTimeoutMs',
       'pendingAffordanceDelayMs',
       'cacheMaxEntries',
       'cacheMaxAgeMs',
+      'warmHoverIntentMs',
+      'maxConcurrentWarms',
     ] as const) {
       for (const value of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
         expect(
@@ -723,6 +915,12 @@ describe('validateResolverConfig', () => {
     expect(() =>
       createContentResolver({ config: { ...DEFAULT_RESOLVER_CONFIG, cacheMaxEntries: 2.5 } }),
     ).toThrow(/cacheMaxEntries must be an integer/);
+  });
+
+  it('rejects a non-integer concurrent-warm cap', () => {
+    expect(() =>
+      createContentResolver({ config: { ...DEFAULT_RESOLVER_CONFIG, maxConcurrentWarms: 2.5 } }),
+    ).toThrow(/maxConcurrentWarms must be an integer/);
   });
 
   it('accepts the shipped default', () => {

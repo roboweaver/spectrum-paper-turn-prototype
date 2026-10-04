@@ -163,6 +163,15 @@ Warming happens on `pointerover`, `focusin`, and `touchstart`, delegated on the 
 at all. Delegation is not optional: the tile-count control re-renders the grid, so a
 listener bound to a trigger is discarded with it.
 
+Because warming turns those three events into credentialed same-origin GETs on hover,
+focus, or touch — before any click — a host's grid hrefs **must be side-effect-free**:
+safe, idempotent GETs, never a state-changing endpoint. Wiring a mutating request into a
+tile's `href` would fire it, with cookies attached, the moment the pointer passes over the
+tile. The warm listeners add a short hover-intent delay (`warmHoverIntentMs`) on
+`pointerover` and cap concurrent warms (`maxConcurrentWarms`) so a sweep across the grid
+does not fan out into one request per tile, but neither bound makes a side-effecting href
+safe — only a side-effect-free href is.
+
 `warm` is skipped when `navigator.connection.saveData` is set. Nothing else about the
 connection is consulted — `effectiveType` is ambiguous for prefetching, since a slow
 connection is where warming helps most *and* where a wasted request hurts most. Absence
@@ -184,6 +193,16 @@ the host sends; a second cache disagreeing with the first is worse than none. Th
 bounds *our* staleness, nothing more. Failures are never cached, and an activation that
 fails after resolution succeeded drops its entry so a retry re-fetches rather than
 replaying a body that may have been the cause.
+
+Because this cache keeps only `{ body, storedAt }`, it **does not honour server
+cache-control or confidentiality directives**. A `no-store`, `no-cache`, or already-expired
+response can still be replayed from memory for up to the age cap, so a host must only make
+**non-sensitive, cacheable** content reachable through tile hrefs. Cookie- or
+permission-dependent HTML must not be served from a warmable route: an authorization change
+on the server would not be reflected until the entry ages out, so a user could briefly be
+shown content they are no longer entitled to see. This is a deliberate operating constraint
+rather than a parser to add — re-implementing `Cache-Control`/`no-store` handling would
+contradict the no-HTTP-cache decision above — and it is the host's boundary to respect.
 
 ### The latency budget reaches the fallback through an injected function
 
