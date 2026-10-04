@@ -983,6 +983,7 @@ test('closing restores the scroll position the turn was opened from', async ({ p
 
   expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(400);
   expect(await page.evaluate(() => document.body.style.position)).toBe('');
+});
 
 /*
  * Prefetch, the latency budget, and the pending affordance.
