@@ -15,6 +15,25 @@ body {
 
 button { font: inherit; }
 
+/*
+ * Off-screen but still in the accessibility tree, for the polite status region that
+ * announces a pending activation. `position: absolute` keeps it out of flow so it
+ * claims no layout and never reaches the grid-only visual baselines; the clip and 1px
+ * box are the standard visually-hidden recipe that keeps the text readable to a screen
+ * reader rather than removed with `display: none`.
+ */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 [data-transition-state='preparing'],
 [data-transition-state='opening'],
 [data-transition-state='closing'] {
@@ -147,6 +166,47 @@ button { font: inherit; }
 }
 
 .card-trigger:focus-visible { outline: 3px solid #1473e6; outline-offset: 5px; }
+
+/*
+ * The pending affordance: an activation whose content has not arrived yet.
+ *
+ * Opacity and nothing else. Four candidates were mocked against the real card -- dim,
+ * pulse, top-edge progress sweep, corner spinner -- and the dim won on frequency rather
+ * than aesthetics: once prefetch lands, most activations are cache hits that never reach
+ * the delay at all, so this is the exception path and the exception path should be the
+ * quietest thing that works. See mocks/pending-affordance.ts.
+ *
+ * No layout property may appear in this rule. Every visual baseline contains the grid
+ * and `paper-turn-start` is grid-only, so a change to size, position, margin, padding,
+ * or border width would move six frames on two platforms. Nothing is drawn either: no
+ * pseudo-element, no animation, no second focal point.
+ *
+ * The opacity alone is not the whole affordance -- `main.ts` pairs it with `aria-busy`,
+ * because appearance is not perceivable by assistive technology.
+ */
+.card-trigger[data-paper-turn-pending='true'] sp-card {
+  opacity: 0.55;
+  /*
+   * Longhands rather than the `transition` shorthand. The shorthand resets
+   * `transition-property` to `opacity` alone, and at this rule's specificity (0,2,1)
+   * that would outrank `.card-trigger sp-card { transition: transform ... }` at
+   * (0,1,1) and snap the hover `transform: scale(1.02)` instead of easing it whenever
+   * the pointer leaves a pending tile. Naming both properties keeps the transform
+   * easing while adding the opacity fade. That same specificity is also what lets the
+   * opacity change survive the `prefers-reduced-motion: reduce` block below (which
+   * sets `transition: none` on `.card-trigger sp-card`), so this is a deliberate
+   * dependency: the longhands preserve both behaviours at once.
+   */
+  transition-property: opacity, transform;
+  transition-duration: 120ms, 140ms;
+  transition-timing-function: ease-out;
+}
+
+/*
+ * Deliberately not branched under `prefers-reduced-motion`. A 120ms opacity fade is not
+ * motion in the vestibular sense that preference addresses, and removing it would make
+ * the state appear abruptly for no benefit. A decision, not an oversight.
+ */
 
 /*
  * Tiles shorten as columns are added, so a 4 x 4 stays on screen without

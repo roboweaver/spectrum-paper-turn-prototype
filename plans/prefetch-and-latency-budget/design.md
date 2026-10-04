@@ -1,9 +1,9 @@
 # Design Document: Prefetch and the latency budget
 
-**Status:** Proposed — not yet approved, but **all four open questions are now
-resolved**: two answered, one retired, and one split so that only a follow-up
-measurement remains. Nothing further gates deriving requirements. `requirements.md` and
-`tasks.md` follow once this document is approved, per the repo's design-first workflow.
+**Status:** Approved. All four open questions are resolved — two answered, one retired,
+and one split so that only a follow-up measurement remains.
+[`requirements.md`](./requirements.md) is derived from this document and
+[`tasks.md`](./tasks.md) from that.
 
 **Branch:** `phase-2-prefetch-and-latency`
 
@@ -144,6 +144,22 @@ the first. The age cap exists to bound *our* staleness, not to reimplement cachi
 One exception worth specifying: a **cache entry must be dropped when its activation
 fails downstream of resolution**. If a fragment resolves and then the capture fails,
 retrying should re-fetch rather than re-serve a body that may have been the problem.
+The same applies when a response violates the fragment contract: the body is admitted on
+`response.ok`, before extraction runs, so a contract-violating response must be dropped on
+the failure branch — otherwise one bad response makes the tile unopenable for the whole age
+window and a server-side fix never takes effect.
+
+Because the cache keeps only the body and the time it was stored, it carries **no server
+cache-control or confidentiality policy**. It cannot honour `no-store`, `no-cache`, or
+expiry, so a response marked uncacheable can still be replayed for up to the age cap. Two
+options were weighed: (A) preserve enough response policy to reject `no-store` and honour
+mandatory revalidation on admission, or (B) narrow admission and document that warmable
+routes must be non-sensitive and safe for in-document reuse. **Option B is chosen.** This
+cache is deliberately a thin staleness bound beneath the browser's own HTTP cache;
+re-implementing `Cache-Control`/`no-store` parsing would contradict that approved
+no-HTTP-cache decision and widen scope well past a review fix. The constraint, stated as the
+host's boundary: only **non-sensitive, cacheable** content may be reachable through tile
+hrefs, and cookie- or permission-dependent HTML must not be served from a warmable route.
 
 ---
 
